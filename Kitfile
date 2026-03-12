@@ -1,0 +1,11 @@
+manifestVersion: 1.0.0
+package:
+  name: next_load
+  description: Forecast energy load
+  authors: [Adam-Al-Rahman]
+code:
+  - path: src
+docs:
+  - path: README.md
+    description: Readme file
+  - path: docs

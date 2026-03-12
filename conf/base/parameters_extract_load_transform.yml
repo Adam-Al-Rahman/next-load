@@ -1,0 +1,14 @@
+# Parameters for the 'extract_load_transform' pipeline.
+# Secrets are managed via Infisical and injected as env vars.
+
+scraper_config:
+  live_extraction: false
+  start_year: 2024
+  
+  # AWS/S3 Configuration mapped from environment variables with sensible defaults
+  s3:
+    endpoint_url: ${env:AWS_ENDPOINT_URL, http://localhost:3900}
+    region_name: ${env:AWS_DEFAULT_REGION, asia-south1}
+    bucket_name: ${env:BUCKET_NAME, next-load-data}
+    access_key: ${env:AWS_ACCESS_KEY_ID}
+    secret_key: ${env:AWS_SECRET_ACCESS_KEY}

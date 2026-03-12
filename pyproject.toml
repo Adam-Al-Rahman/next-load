@@ -1,0 +1,116 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+requires-python = ">=3.13"
+name = "next_load"
+readme = "README.md"
+dynamic = ["version"]
+dependencies = [
+    "ipython>=8.10",
+    "jupyterlab>=3.0",
+    "notebook",
+    "kedro~=1.2.0",
+    "marimo>=0.20.4",
+    "polars>=1.38.1",
+    "kedro-viz>=12.3.0",
+    "prefect>=3.6.21",
+    "pandas>=2.3.3",
+    "pandera[polars]>=0.29.0",
+    "watchdog>=6.0.0",
+    "kedro-datasets[pandas,pandas-exceldataset,pandas-parquetdataset,polars]>=9.2.0",
+    "boto3>=1.35.0",
+    "botocore>=1.35.0",
+    "kedro-mlflow>=2.0.2",
+    "plotly[express]>=6.6.0",
+    "crawl4ai>=0.8.0",
+    "pyarrow>=14.0.0",
+    "s3fs>=2024.10.0",
+    "httpx>=0.27.0",
+    "infisicalsdk>=1.0.16",
+    "python-calamine>=0.2.0",
+    "fastexcel>=0.11.0",
+    "mlflow==3.10.1",
+    "dotenv>=0.9.9",
+    "bentoml>=1.4.36",
+    "altair>=6.0.0",
+]
+
+[project.scripts]
+"next-load" = "next_load.__main__:main"
+
+[project.entry-points."kedro.hooks"]
+
+[project.optional-dependencies]
+docs = [
+    "docutils<0.21",
+    "sphinx>=5.3,<7.3",
+    "sphinx_rtd_theme==2.0.0",
+    "nbsphinx==0.8.1",
+    "sphinx-autodoc-typehints==1.20.2",
+    "sphinx_copybutton==0.5.2",
+    "ipykernel>=5.3, <7.0",
+    "Jinja2<3.2.0",
+    "myst-parser>=1.0,<2.1",
+]
+dev = [
+    "pytest-cov>=3,<7",
+    "pytest-mock>=1.7.1, <2.0",
+    "pytest~=7.2",
+    "ruff~=0.12.0",
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "next_load.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+namespaces = false
+
+[tool.kedro]
+package_name = "next_load"
+project_name = "next_load"
+kedro_init_version = "1.2.0"
+tools = "['Linting', 'Testing', 'Custom Logging', 'Documentation', 'Data Structure']"
+example_pipeline = "False"
+source_dir = "src"
+
+[tool.pytest.ini_options]
+addopts = """
+--cov-report term-missing \
+--cov src/next_load -ra"""
+
+[tool.coverage.report]
+fail_under = 0
+show_missing = true
+exclude_lines = ["pragma: no cover", "raise NotImplementedError"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff]
+line-length = 88
+show-fixes = true
+
+[tool.ruff.lint]
+select = [
+    "F",    # Pyflakes
+    "W",    # pycodestyle
+    "E",    # pycodestyle
+    "I",    # isort
+    "UP",   # pyupgrade
+    "PL",   # Pylint
+    "T201", # Print Statement
+]
+ignore = ["E501"] # Ruff format takes care of line-too-long
+
+[tool.kedro_telemetry]
+project_id = "13a13e878209411aa9f72978553b3ed0"
+
+[tool.marimo.runtime]
+output_max_bytes = 1_000_000_000
+pythonpath = ["src", "src/next_load"]
+
+[tool.marimo.display]
+custom_css = ["./marimo.css"]

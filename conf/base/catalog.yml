@@ -1,0 +1,39 @@
+# NextLoad Catalog
+
+# Internal Memory Dataset for passing raw list between nodes
+raw_list_metadata:
+  type: MemoryDataset
+
+# Partitioned Metadata (YYYY_MM.parquet)
+nrldc_metadata_partitioned:
+  type: kedro_datasets.partitions.PartitionedDataset
+  path: s3://${env:BUCKET_NAME, next-load-data}/nrldc_forecast/metadata/
+  credentials: garage_s3
+  dataset:
+    type: pandas.ParquetDataset
+    credentials: garage_s3
+  filename_suffix: .parquet
+
+# Partitioned Raw Excel Files (data/YYYY/Month/filename.xlsx)
+nrldc_raw_files_partitioned:
+  type: kedro_datasets.partitions.PartitionedDataset
+  path: s3://${env:BUCKET_NAME, next-load-data}/nrldc_forecast/data/
+  credentials: garage_s3
+  dataset:
+    type: pandas.ExcelDataset
+    credentials: garage_s3
+  filename_suffix: .xlsx
+
+# Validated raw partitions passed in memory
+validated_nrldc_raw_files:
+  type: MemoryDataset
+
+# Intermediate unified table before final contract validation
+intermediate_primary_forecast:
+  type: MemoryDataset
+
+# Primary Transformed Data (Unified table) - Final S3 output
+primary_nrldc_forecast:
+  type: kedro_datasets.pandas.ParquetDataset
+  filepath: s3://${env:BUCKET_NAME, next-load-data}/processed/01_primary/nrldc_forecast_primary.parquet
+  credentials: garage_s3

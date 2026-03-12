@@ -1,0 +1,16 @@
+{
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/__marimo__": true,
+        "**/marimo.css": true,
+        "**/mlruns": true,
+        "**/.viz": true,
+        "**/.jj": true,
+        "**/dist": true,
+        "**/.git": true,
+        "**/.vscode": true,
+        ".venv": true,
+        "uv.lock": true,
+        "**/__init__.py": false,
+    }
+}
