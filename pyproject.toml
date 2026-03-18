@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-requires-python = ">=3.13"
+requires-python = "==3.13.0"
 name = "next_load"
 readme = "README.md"
 dynamic = ["version"]
@@ -12,7 +12,7 @@ dependencies = [
     "jupyterlab>=3.0",
     "notebook",
     "kedro~=1.2.0",
-    "marimo>=0.20.4",
+    "marimo>=0.21.0",
     "polars>=1.38.1",
     "kedro-viz>=12.3.0",
     "prefect>=3.6.21",
@@ -23,7 +23,7 @@ dependencies = [
     "boto3>=1.35.0",
     "botocore>=1.35.0",
     "kedro-mlflow>=2.0.2",
-    "plotly[express]>=6.6.0",
+    "plotly<6.0.0",
     "crawl4ai>=0.8.0",
     "pyarrow>=14.0.0",
     "s3fs>=2024.10.0",
@@ -35,6 +35,9 @@ dependencies = [
     "dotenv>=0.9.9",
     "bentoml>=1.4.36",
     "altair>=6.0.0",
+    "statsforecast>=2.0.3",
+    "utilsforecast>=0.2.15",
+    "arch>=8.0.0",
 ]
 
 [project.scripts]

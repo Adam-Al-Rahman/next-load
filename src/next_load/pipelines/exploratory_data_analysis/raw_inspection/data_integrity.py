@@ -5,7 +5,6 @@ app = marimo.App(width="full", auto_download=["ipynb"])
 
 with app.setup:
     import os
-    from infisical_sdk import InfisicalSDKClient
 
     import marimo as mo
 

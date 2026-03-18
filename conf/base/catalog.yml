@@ -37,3 +37,21 @@ primary_nrldc_forecast:
   type: kedro_datasets.pandas.ParquetDataset
   filepath: s3://${env:BUCKET_NAME, next-load-data}/processed/01_primary/nrldc_forecast_primary.parquet
   credentials: garage_s3
+
+# Preprocessed Data
+preprocessed_dataset:
+  type: kedro_datasets.pandas.ParquetDataset
+  filepath: s3://${env:BUCKET_NAME, next-load-data}/processed/01_primary/preprocessed_dataset.parquet
+  credentials: garage_s3
+
+# Train dataset
+train_dataset:
+  type: kedro_datasets.pandas.ParquetDataset
+  filepath: s3://${env:BUCKET_NAME, next-load-data}/processed/01_primary/train_dataset.parquet
+  credentials: garage_s3
+
+# Test dataset
+test_dataset:
+  type: kedro_datasets.pandas.ParquetDataset
+  filepath: s3://${env:BUCKET_NAME, next-load-data}/processed/01_primary/test_dataset.parquet
+  credentials: garage_s3
