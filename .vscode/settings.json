@@ -12,5 +12,6 @@
         ".venv": true,
         "uv.lock": true,
         "**/__init__.py": false,
-    }
+    },
+    "taipyStudio.gUI.elementsFilePaths": []
 }

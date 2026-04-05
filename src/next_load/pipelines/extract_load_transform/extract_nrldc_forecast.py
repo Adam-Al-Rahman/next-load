@@ -1,3 +1,8 @@
+"""
+Web scraping logic for retrieving NRLDC forecast data.
+Uses Crawl4AI to navigate the NRLDC website, extract file metadata, and yield data for processing.
+"""
+
 import marimo
 
 __generated_with = "0.20.4"
@@ -6,11 +11,9 @@ app = marimo.App(width="full", auto_download=["ipynb"])
 with app.setup:
     import datetime
     import json
-
     import marimo as mo
     from crawl4ai import AsyncWebCrawler, CacheMode, CrawlerRunConfig
     from crawl4ai.extraction_strategy import JsonCssExtractionStrategy
-
     from next_load.pipelines.extract_load_transform.elt_config import ScraperConfig
 
 
@@ -19,7 +22,11 @@ async def extract_nrldc_data(
     config: ScraperConfig,
     nrldc_base_url="https://nrldc.in",
 ):
-    """Async generator that crawls NRLDC and yields raw data month by month."""
+    """
+    Asynchronous generator that crawls the NRLDC forecast page.
+    Navigates through year and month directories to collect file links and metadata.
+    Supports both historical backfilling and live incremental extraction.
+    """
     base_url = f"{nrldc_base_url}/forecast/intra-day-forecast"
     session_id = "intra_day_forecast"
     current_time = datetime.datetime.now()
@@ -65,7 +72,6 @@ async def extract_nrldc_data(
     }
 
     async with AsyncWebCrawler() as crawler:
-        print("Loading root directory...")
         await crawler.arun(
             url=base_url,
             cache_mode=CacheMode.BYPASS,
@@ -77,7 +83,6 @@ async def extract_nrldc_data(
         )
 
         for year in target_years:
-            print(f"\n{'=' * 40}\n--- Processing Year: {year} ---\n{'=' * 40}")
             year_config = CrawlerRunConfig(
                 js_code=f"document.querySelector('button[data-foldername=\"{year}\"]')?.click();",
                 cache_mode=CacheMode.BYPASS,
@@ -110,7 +115,6 @@ async def extract_nrldc_data(
                     if item.get("month") and item["month"] not in history_years
                 ]
             else:
-                print(f"Failed to extract months for {year}")
                 continue
 
             target_months = (
@@ -121,7 +125,6 @@ async def extract_nrldc_data(
                 target_months,
                 key=lambda m: datetime.datetime.strptime(m[:3], "%b").month,
             ):
-                print(f"\n  -> Navigating to Month: {month}")
                 month_config = CrawlerRunConfig(
                     js_code=f"document.querySelector('button[data-foldername=\"{month}\"]')?.click();",
                     cache_mode=CacheMode.BYPASS,
@@ -154,7 +157,6 @@ async def extract_nrldc_data(
                 if month_result.success and month_result.extracted_content:
                     raw_data = json.loads(month_result.extracted_content)
 
-                    # Normalize links
                     for item in raw_data:
                         link = item.get("download_link", "")
                         if link and link.startswith("/"):
@@ -164,7 +166,6 @@ async def extract_nrldc_data(
 
                     yield raw_data, year, month
 
-                # Navigate BACK
                 back_to_year_config = CrawlerRunConfig(
                     js_code=f"""
                         const breadcrumbLinks = Array.from(document.querySelectorAll('.dir-breadcrumbs a'));
@@ -178,7 +179,6 @@ async def extract_nrldc_data(
                 )
                 await crawler.arun(url=base_url, config=back_to_year_config)
 
-            print(f"\nFinished {year}. Navigating back to root directory...")
             exist_current_year_config = CrawlerRunConfig(
                 js_code="""
                     const breadcrumbLinks = Array.from(document.querySelectorAll('.dir-breadcrumbs a'));

@@ -1,11 +1,7 @@
-# /// script
-# dependencies = [
-#     "marimo",
-#     "polars>=1.38.1",
-#     "pandera[polars]>=0.29.0",
-#     "python-calamine>=0.2.0",
-# ]
-# ///
+"""
+Transformation logic and data validation for NRLDC forecast Excel files.
+Uses Polars for data manipulation and Pandera for schema enforcement.
+"""
 
 import marimo
 
@@ -17,7 +13,6 @@ with app.setup:
     import logging
     import re
     from typing import Optional
-
     import pandas as pd
     import pandera as pa
     import polars as pl
@@ -28,8 +23,9 @@ with app.setup:
 
 @app.class_definition
 class RawNRLDCForecastMetadataSchema(DataFrameModel):
-    """Data Contract: Raw Excel Metadata structure."""
-
+    """
+    Schema definition for validating the metadata headers in the raw Excel files.
+    """
     report_title: str = Field(eq="Northern Regional Load Despatch Centre (NRLDC)")
     date_value: str = Field(nullable=True)
     period: str = Field(eq="Period")
@@ -39,8 +35,9 @@ class RawNRLDCForecastMetadataSchema(DataFrameModel):
 
 @app.class_definition
 class RawNRLDCForecastTabularDataSchema(DataFrameModel):
-    """Data Contract: Raw Excel Tabular structure."""
-
+    """
+    Schema definition for validating the tabular demand data in the raw Excel files.
+    """
     period: str = Field(str_matches=r"^\d{2}:\d{2}\s*-\s*\d{2}:\d{2}$")
     nrldc_intraday_forecasted_demand_mw: str = Field(
         str_matches=r"^(-?\d+(\.\d+)?)?$", nullable=True
@@ -50,9 +47,9 @@ class RawNRLDCForecastTabularDataSchema(DataFrameModel):
 
 @app.class_definition
 class TransformedRawNRLDCForecastDataSchema(DataFrameModel):
-    """Data Contract: Final transformed unified table."""
-
-    # We use DateTime to accommodate the automatic casting when moving between Pandas/Polars
+    """
+    Schema definition for the final transformed and unified data table.
+    """
     date: datetime.datetime
     period: str = Field(str_matches=r"^\d{2}:\d{2}\s*-\s*\d{2}:\d{2}$")
     actual_demand_mw: float = Field(nullable=True)
@@ -64,14 +61,14 @@ class TransformedRawNRLDCForecastDataSchema(DataFrameModel):
 
 
 @app.function
-def validate_raw_excel_dataframe(df: pd.DataFrame, partition_key: str) -> bool:
+def validate_raw_excel_dataframe(df: pl.DataFrame, partition_key: str) -> bool:
     """
-    Node-level logic for 'Before Transformation' contract validation.
+    Validates the structure of a raw Excel file before transformation.
+    Checks both metadata cells and tabular data alignment.
     """
     try:
-        dataset = pl.from_pandas(df).select(pl.all().cast(pl.Utf8)).fill_null("")
+        dataset = df.select(pl.all().cast(pl.Utf8)).fill_null("")
 
-        # Validate Metadata Cells
         metadata_cells = pl.DataFrame(
             {
                 "report_title": [str(dataset.item(0, 0)).strip()],
@@ -84,21 +81,15 @@ def validate_raw_excel_dataframe(df: pd.DataFrame, partition_key: str) -> bool:
 
         RawNRLDCForecastMetadataSchema.validate(metadata_cells)
 
-        # Validate Tabular
         raw_tabular_data = dataset.slice(5).select(
             [dataset.columns[i] for i in [1, 3, 4]]
         )
         raw_tabular_data = raw_tabular_data.rename(
-            dict(
-                zip(
-                    raw_tabular_data.columns,
-                    [
-                        "period",
-                        "nrldc_intraday_forecasted_demand_mw",
-                        "actual_demand_mw",
-                    ],
-                )
-            )
+            {
+                raw_tabular_data.columns[0]: "period",
+                raw_tabular_data.columns[1]: "nrldc_intraday_forecasted_demand_mw",
+                raw_tabular_data.columns[2]: "actual_demand_mw",
+            }
         )
 
         RawNRLDCForecastTabularDataSchema.validate(raw_tabular_data)
@@ -110,25 +101,20 @@ def validate_raw_excel_dataframe(df: pd.DataFrame, partition_key: str) -> bool:
 
 @app.function
 def transform_single_partition(
-    df: pd.DataFrame, partition_key: str
+    df: pl.DataFrame, partition_key: str
 ) -> Optional[pl.DataFrame]:
     """
-    Core transformation logic.
+    Transforms a single partition of raw NRLDC data into a cleaned format.
+    Extracts the date from the partition key or file content and casts demand values to floats.
     """
     try:
-        dataset = pl.from_pandas(df).select(pl.all().cast(pl.Utf8)).fill_null("")
+        dataset = df.select(pl.all().cast(pl.Utf8)).fill_null("")
 
-        # Parse Date from partition_key (filename)
-        # Expected format in filename: dd-mm-yyyy (e.g., 14-03-2026)
         match = re.search(r"(\d{2})-(\d{2})-(\d{4})", partition_key)
         if match:
             day, month, year = match.groups()
             file_date = datetime.datetime.strptime(f"{day}-{month}-{year}", "%d-%m-%Y")
         else:
-            # Fallback to Excel cell if filename date is missing
-            logger.warning(
-                f"Could not find dd-mm-yyyy date in partition_key: {partition_key}. Falling back to Excel cell."
-            )
             raw_date = dataset.item(2, 1).strip()
             try:
                 file_date = datetime.datetime.strptime(raw_date, "%d-%b-%Y")
@@ -139,24 +125,17 @@ def transform_single_partition(
                 else:
                     raise
 
-        # Extract Tabular
         raw_tabular_data = dataset.slice(5).select(
             [dataset.columns[i] for i in [1, 3, 4]]
         )
         raw_tabular_data = raw_tabular_data.rename(
-            dict(
-                zip(
-                    raw_tabular_data.columns,
-                    [
-                        "period",
-                        "nrldc_intraday_forecasted_demand_mw",
-                        "actual_demand_mw",
-                    ],
-                )
-            )
+            {
+                raw_tabular_data.columns[0]: "period",
+                raw_tabular_data.columns[1]: "nrldc_intraday_forecasted_demand_mw",
+                raw_tabular_data.columns[2]: "actual_demand_mw",
+            }
         )
 
-        # Cast and Add Date
         return raw_tabular_data.with_columns(
             pl.col("nrldc_intraday_forecasted_demand_mw").cast(
                 pl.Float64, strict=False
@@ -177,15 +156,15 @@ def transform_single_partition(
 
 
 @app.function
-def validate_transformed_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+def validate_transformed_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Node-level logic for 'After Transformation' contract validation.
+    Validates the structure and data types of the transformed DataFrame.
+    Ensures the final output matches the TransformedRawNRLDCForecastDataSchema.
     """
-    # Ensure column 'date' is actually datetime for Pandera validation
-    df["date"] = pd.to_datetime(df["date"])
+    if df["date"].dtype != pl.Datetime:
+         df = df.with_columns(pl.col("date").cast(pl.Datetime))
 
-    pl_df = pl.from_pandas(df)
-    TransformedRawNRLDCForecastDataSchema.validate(pl_df)
+    TransformedRawNRLDCForecastDataSchema.validate(df)
     return df
 
 

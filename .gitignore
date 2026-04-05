@@ -169,3 +169,5 @@ GEMINI.md
 
 .vscode/
 **/__marimo__
+lightning_logs/
+*.egg-info/

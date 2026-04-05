@@ -1,3 +1,8 @@
+"""
+Marimo notebook for evaluating data integrity of raw primary datasets.
+Performs checks for missing values, time gaps, duplicates, and schema consistency.
+"""
+
 import marimo
 
 __generated_with = "0.20.4"
@@ -5,17 +10,13 @@ app = marimo.App(width="full", auto_download=["ipynb"])
 
 with app.setup:
     import os
-
     import marimo as mo
-
     import s3fs
-
     import polars as pl
     import pyarrow.parquet as pq
     from datetime import datetime
     import altair as alt
-
-    from next_load.core.nl_auth import get_s3_filesystem
+    from next_load.core.nl_auth import get_infisical_secret
 
 
 @app.cell(hide_code=True)
@@ -28,6 +29,9 @@ def _():
 
 @app.function
 def DATA_INTEGRITY_INSIGHTS():
+    """
+    Returns high-level findings regarding dataset health, including identified time gaps and data consistency.
+    """
     INSIGHTS = [
         {
             "Category": "Data Integrity",
@@ -38,32 +42,32 @@ def DATA_INTEGRITY_INSIGHTS():
         {
             "Category": "Data Integrity",
             "Operation": "Time Gap",
-            "Insight": "Gaps: [('2025-04-28', '2025-04-30'), ('2025-05-21', '2025-07-26'), ('2025-07-29', '2025-07-29'), ('2025-08-29', '2025-09-14'), ('2025-10-31', '2025-10-31'), ('2026-02-28', '2026-02-28')]",
-            "Action": "Insert the missing timestamps, but leave the values as nulls. In processing stage after data split perform machine learning imputation on each dataset independently",
+            "Insight": "Significant gaps identified across 2025 and early 2026.",
+            "Action": "Insert missing timestamps as nulls and perform per-split imputation during processing.",
         },
         {
             "Category": "Data Integrity",
             "Operation": "Missing Months Seasonal Pattern",
-            "Insight": "('2024-01-01', '2024-03-31'), a model needs to see a seasonal pattern at least twice to learn it effectively. Is data heavily influenced by the time of year? => No (15 min)",
-            "Action": "No need to bother about the missing months ('2024-01-01', '2024-03-31')",
+            "Insight": "Initial months of 2024 are missing, but 15-minute resolution provides sufficient detail.",
+            "Action": "No remediation required for missing early 2024 data.",
         },
         {
             "Category": "Data Integrity",
             "Operation": "Duplication",
-            "Insight": "Zero duplicate records identified in the dataset.",
-            "Action": "No Deduplication Required",
+            "Insight": "No duplicate records found.",
+            "Action": "No deduplication required.",
         },
         {
             "Category": "Data Integrity",
             "Operation": "Data Type Consistency",
-            "Insight": "All columns match the required domain schema.",
-            "Action": "Schema Validated",
+            "Insight": "Columns match the domain schema.",
+            "Action": "Schema validated.",
         },
         {
             "Category": "Data Integrity",
             "Operation": "Consider nrldc_intraday_forecasted_demand_mw?",
-            "Insight": "At the exact moment my model needs to generate a forecast for tomorrow (or the next hour), will the NRLDC intraday forecast for that same future time already be published and sitting in my database? => No",
-            "Action": "Remove the nrldc_intraday_forecasted_demand_mw",
+            "Insight": "NRLDC intraday forecasts won't be available at prediction time in production.",
+            "Action": "Remove this column from the modeling dataset.",
         },
     ]
 
@@ -71,14 +75,24 @@ def DATA_INTEGRITY_INSIGHTS():
 
 
 @app.cell
-def _():
+def _(get_infisical_secret, s3fs):
+    """
+    Load the primary dataset from S3 using cloud credentials.
+    """
+    s3_fs = s3fs.S3FileSystem(
+        key=get_infisical_secret("AWS_ACCESS_KEY_ID"),
+        secret=get_infisical_secret("AWS_SECRET_ACCESS_KEY"),
+        endpoint_url=get_infisical_secret("AWS_ENDPOINT_URL") or "http://localhost:3900",
+        client_kwargs={"region_name": get_infisical_secret("AWS_DEFAULT_REGION")},
+        config_kwargs={"s3": {"addressing_style": "path"}}
+    )
     primary_dataset = pl.from_arrow(
         pq.ParquetDataset(
             "next-load-data/processed/01_primary/nrldc_forecast_primary.parquet",
-            filesystem=get_s3_filesystem(),
+            filesystem=s3_fs,
         ).read_pandas()
     )
-    return (primary_dataset,)
+    return primary_dataset, s3_fs
 
 
 @app.cell(hide_code=True)
@@ -122,6 +136,9 @@ def _():
 
 @app.cell
 def _(primary_dataset):
+    """
+    Transform raw primary data into a unified time-series for gap analysis.
+    """
     processed_dataset = (
         primary_dataset.with_columns(
             start_time=pl.col("period").str.split(" - ").list.first()
@@ -161,10 +178,12 @@ def _(processed_dataset):
 
 @app.cell
 def _(processed_dataset):
+    """
+    Identify missing 15-minute intervals by comparing dataset against a full range.
+    """
     start_timestamp = processed_dataset["timestamp"][0]
     end_timestamp = processed_dataset["timestamp"][-1]
 
-    # Generate a DataFrame containing the expected 15-minute intervals
     expected_range = pl.DataFrame(
         {
             "expected_timestamp": pl.datetime_range(
@@ -173,8 +192,6 @@ def _(processed_dataset):
         }
     )
 
-    # Find missing timestamps using an anti-join
-    # This keeps only the rows from 'expected_range' that DO NOT exist in 'processed_dataset'
     missing_timestamps = expected_range.join(
         processed_dataset,
         left_on="expected_timestamp",
@@ -182,7 +199,6 @@ def _(processed_dataset):
         how="anti",
     )
 
-    # Check if the dataset is complete
     is_complete = missing_timestamps.height == 0
 
     print(f"Is every 15-minute interval present? {is_complete}")
@@ -198,20 +214,18 @@ def _(missing_timestamps):
 
 @app.cell
 def _(missing_timestamps):
+    """
+    Group missing timestamps into contiguous blocks to visualize the duration of data loss.
+    """
     missing_blocks = (
         missing_timestamps.sort("expected_timestamp")
-        # Calculate the time difference between the current row and the previous row
         .with_columns(time_diff=pl.col("expected_timestamp").diff())
-        # Mark the start of a new block if the difference is NOT exactly 15 minutes
-        # (The first row will be null, so we fill it with True to start Block 1)
         .with_columns(
             is_new_block=(pl.col("time_diff") != pl.duration(minutes=15)).fill_null(
                 True
             )
         )
-        # Create a unique block ID by cumulatively summing the True/False values
         .with_columns(block_id=pl.col("is_new_block").cum_sum())
-        # Group by this block ID and find the min (start) and max (end) timestamp
         .group_by("block_id")
         .agg(
             [
@@ -220,9 +234,7 @@ def _(missing_timestamps):
                 pl.len().alias("missing_data_points"),
             ]
         )
-        # Sort the final output by the start dates
         .sort("missing_start")
-        # Drop the internal 'block_id' as we don't need to see it
         .drop("block_id")
     )
 

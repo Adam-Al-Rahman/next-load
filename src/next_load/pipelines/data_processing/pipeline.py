@@ -1,3 +1,7 @@
+"""
+Kedro pipeline for data processing.
+Coordinates preprocessing, interval alignment, and dataset splitting.
+"""
 from kedro.pipeline import Pipeline, node, pipeline
 from .nodes import (
     preprocess_nrldc_data,
@@ -6,6 +10,9 @@ from .nodes import (
 )
 
 def create_pipeline(**kwargs) -> Pipeline:
+    """
+    Defines the data processing pipeline structure.
+    """
     return pipeline(
         [
             node(

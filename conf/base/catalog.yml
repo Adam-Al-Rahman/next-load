@@ -7,51 +7,137 @@ raw_list_metadata:
 # Partitioned Metadata (YYYY_MM.parquet)
 nrldc_metadata_partitioned:
   type: kedro_datasets.partitions.PartitionedDataset
-  path: s3://${env:BUCKET_NAME, next-load-data}/nrldc_forecast/metadata/
+  path: s3://${infisical:BUCKET_NAME, "next-load-data"}/nrldc_forecast/metadata/
   credentials: garage_s3
   dataset:
-    type: pandas.ParquetDataset
+    type: polars.EagerPolarsDataset
+    file_format: parquet
     credentials: garage_s3
   filename_suffix: .parquet
+  metadata:
+    kedro-viz:
+      layer: raw_ingestion
 
-# Partitioned Raw Excel Files (data/YYYY/Month/filename.xlsx)
+# Partitioned Raw Parquet Files (data/YYYY/Month/filename.parquet)
 nrldc_raw_files_partitioned:
   type: kedro_datasets.partitions.PartitionedDataset
-  path: s3://${env:BUCKET_NAME, next-load-data}/nrldc_forecast/data/
+  path: s3://${infisical:BUCKET_NAME, "next-load-data"}/nrldc_forecast/data/
   credentials: garage_s3
   dataset:
-    type: pandas.ExcelDataset
+    type: polars.EagerPolarsDataset
+    file_format: parquet
     credentials: garage_s3
-  filename_suffix: .xlsx
+  filename_suffix: .parquet
+  metadata:
+    kedro-viz:
+      layer: raw_ingestion
 
 # Validated raw partitions passed in memory
 validated_nrldc_raw_files:
   type: MemoryDataset
+  metadata:
+    kedro-viz:
+      layer: raw_transformation
 
 # Intermediate unified table before final contract validation
 intermediate_primary_forecast:
   type: MemoryDataset
+  metadata:
+    kedro-viz:
+      layer: raw_transformation
 
 # Primary Transformed Data (Unified table) - Final S3 output
 primary_nrldc_forecast:
-  type: kedro_datasets.pandas.ParquetDataset
-  filepath: s3://${env:BUCKET_NAME, next-load-data}/processed/01_primary/nrldc_forecast_primary.parquet
+  type: polars.EagerPolarsDataset
+  filepath: s3://${infisical:BUCKET_NAME, "next-load-data"}/processed/01_primary/nrldc_forecast_primary.parquet
+  file_format: parquet
   credentials: garage_s3
+  metadata:
+    kedro-viz:
+      layer: processed
 
 # Preprocessed Data
 preprocessed_dataset:
-  type: kedro_datasets.pandas.ParquetDataset
-  filepath: s3://${env:BUCKET_NAME, next-load-data}/processed/01_primary/preprocessed_dataset.parquet
+  type: polars.EagerPolarsDataset
+  filepath: s3://${infisical:BUCKET_NAME, "next-load-data"}/processed/01_primary/preprocessed_dataset.parquet
+  file_format: parquet
   credentials: garage_s3
+  metadata:
+    kedro-viz:
+      layer: processed
 
 # Train dataset
 train_dataset:
-  type: kedro_datasets.pandas.ParquetDataset
-  filepath: s3://${env:BUCKET_NAME, next-load-data}/processed/01_primary/train_dataset.parquet
+  type: polars.EagerPolarsDataset
+  filepath: s3://${infisical:BUCKET_NAME, "next-load-data"}/processed/01_primary/train_dataset.parquet
+  file_format: parquet
   credentials: garage_s3
+  metadata:
+    kedro-viz:
+      layer: processed
 
 # Test dataset
 test_dataset:
-  type: kedro_datasets.pandas.ParquetDataset
-  filepath: s3://${env:BUCKET_NAME, next-load-data}/processed/01_primary/test_dataset.parquet
+  type: polars.EagerPolarsDataset
+  filepath: s3://${infisical:BUCKET_NAME, "next-load-data"}/processed/01_primary/test_dataset.parquet
+  file_format: parquet
   credentials: garage_s3
+  metadata:
+    kedro-viz:
+      layer: processed
+
+# Intermediate datasets for baseline_models
+train_dataset_with_features:
+  type: MemoryDataset
+  metadata:
+    kedro-viz:
+      layer: baseline_models
+
+train_dataset_imputed:
+  type: MemoryDataset
+  metadata:
+    kedro-viz:
+      layer: baseline_models
+
+baseline_metrics:
+  type: kedro_mlflow.io.metrics.MlflowMetricsHistoryDataset
+  prefix: "baseline"
+
+# Baseline model logging and registry
+baseline_model:
+  type: MemoryDataset
+  metadata:
+    layer: baseline_models
+
+# Candidate Models
+train_with_exog:
+  type: MemoryDataset
+  metadata:
+    layer: candidate_models
+
+test_with_exog:
+  type: MemoryDataset
+  metadata:
+    layer: candidate_models
+
+train_imputed:
+  type: MemoryDataset
+  metadata:
+    layer: candidate_models
+
+lgbm_candidate_models:
+  type: MemoryDataset
+  metadata:
+    layer: candidate_models
+
+neural_candidate_model:
+  type: MemoryDataset
+  metadata:
+    layer: candidate_models
+
+candidate_metrics:
+  type: kedro_mlflow.io.metrics.MlflowMetricsHistoryDataset
+  prefix: "candidate"
+
+
+

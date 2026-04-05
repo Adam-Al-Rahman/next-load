@@ -1,3 +1,8 @@
+"""
+Marimo notebook for univariate analysis of energy demand.
+Covers outlier detection, variance analysis, stationarity testing, and data drift calculation.
+"""
+
 import marimo
 
 __generated_with = "0.21.0"
@@ -5,33 +10,29 @@ app = marimo.App(width="full", auto_download=["ipynb"])
 
 with app.setup:
     import marimo as mo
-
     import polars as pl
     import pyarrow.parquet as pq
-
+    import s3fs
     from datetime import datetime
     import altair as alt
     import matplotlib.pyplot as plt
-
     from utilsforecast.plotting import plot_series
     from statsforecast.models import MSTL
     from statsforecast import StatsForecast
-
     from statsmodels.tsa.stattools import adfuller
-
     from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
-
     import nannyml as nml
-
-    from next_load.core.nl_auth import get_s3_filesystem
+    from next_load.core.nl_auth import get_infisical_secret
 
 
 @app.cell
 def _():
+    """
+    Load previous insights from data processing and integrity checks.
+    """
     from next_load.pipelines.data_processing.preprocessing import (
         DATA_PREPROCESSING_INSIGHTS,
     )
-
     from next_load.pipelines.exploratory_data_analysis.raw_inspection.data_integrity import (
         DATA_INTEGRITY_INSIGHTS,
     )
@@ -50,30 +51,34 @@ def _():
 
 @app.function
 def UNIVARIATE_ANALYSIS_INSIGHTS():
+    """
+    Returns summarized findings from the univariate analysis phase.
+    Notes significant outliers, seasonal variance increases, and stationarity results.
+    """
     INSIGHTS = [
         {
             "Category": "EDA Univariate Analysis",
             "Operation": "Outlier",
-            "Insight": "['2024-11-21T14:45:00 => 8.785M', '2025-03-24T16:00:00 => -2.433M']",
-            "Action": "Remove and perform machine learing imputation",
+            "Insight": "Identified two extreme spikes in Nov 2024 and March 2025.",
+            "Action": "Apply predictive imputation using LightGBM.",
         },
         {
             "Category": "EDA Univariate Analysis",
             "Operation": "Variance",
-            "Insight": "In year 2025 & 2026 the variance increase in duration from start of November to next year end of March",
-            "Action": "Apply a variance-stabilizing transformation (e.g., Box-Cox or Log) to the target variable before statistical forecasting, and engineer a 'high-volatility season' boolean feature for ML pipelines.",
+            "Insight": "Increased volatility observed from November to March.",
+            "Action": "Create a 'high-volatility season' feature and consider log transformations.",
         },
         {
             "Category": "EDA Univariate Analysis",
             "Operation": "Phillips-Perron Unit Root Test",
-            "Insight": "PP statistic: -5.0461, Series is stationary",
-            "Action": "No need to perform further stationarity operations",
+            "Insight": "Series confirmed as stationary.",
+            "Action": "No further stationarity adjustments needed.",
         },
         {
             "Category": "EDA Univariate Analysis",
             "Operation": "New Features",
-            "Insight": "We have time gap & increase in variance in NOV-MARCH months",
-            "Action": "We use machine learning imputation but add feature `is_imputed` and `is_high_volatility_season`",
+            "Insight": "Combining time gaps and seasonal variance requires specific indicators.",
+            "Action": "Implement 'is_imputed' and 'is_high_volatility_season' flags.",
         },
     ]
 
@@ -81,8 +86,17 @@ def UNIVARIATE_ANALYSIS_INSIGHTS():
 
 
 @app.cell
-def _():
-    S3_FS = get_s3_filesystem()
+def _(get_infisical_secret, s3fs):
+    """
+    Initialize S3 connection and load train/test datasets for inspection.
+    """
+    S3_FS = s3fs.S3FileSystem(
+        key=get_infisical_secret("AWS_ACCESS_KEY_ID"),
+        secret=get_infisical_secret("AWS_SECRET_ACCESS_KEY"),
+        endpoint_url=get_infisical_secret("AWS_ENDPOINT_URL") or "http://localhost:3900",
+        client_kwargs={"region_name": get_infisical_secret("AWS_DEFAULT_REGION")},
+        config_kwargs={"s3": {"addressing_style": "path"}}
+    )
     train_dataset = pl.from_arrow(
         pq.ParquetDataset(
             "next-load-data/processed/01_primary/train_dataset.parquet",
@@ -127,12 +141,18 @@ def _():
 
 @app.cell
 def _(train_dataset):
+    """
+    Locate missing demand values in the training set.
+    """
     missing_timestamps = train_dataset.filter(pl.col("actual_demand_mw").is_null())
     return (missing_timestamps,)
 
 
 @app.cell
 def _(missing_timestamps):
+    """
+    Group missing timestamps into duration blocks for better visibility of data loss events.
+    """
     missing_blocks = (
         missing_timestamps.sort("timestamp")
         .with_columns(time_diff=pl.col("timestamp").diff())
@@ -162,14 +182,16 @@ def _(missing_timestamps):
 def _():
     mo.md(r"""
     ## Fake Imputation
-
-    Imputation only for the EDA Univariate Analysis
     """)
     return
 
 
 @app.cell
 def _(train_dataset):
+    """
+    Apply a seasonal median imputation strategy for visual exploration only.
+    Combines rolling macro trends with localized seasonal swings.
+    """
     train_resampled = train_dataset.upsample(time_column="timestamp", every="15m")
 
     train_flagged = train_resampled.with_columns(
@@ -180,16 +202,12 @@ def _(train_dataset):
         pl.col("actual_demand_mw").interpolate().alias("naive_bridge")
     )
 
-    # Extract the 'Macro Trend' using a 7-day rolling average over the bridge.
-    # 7 days * 24 hours * 4 (15-min intervals) = 672 periods.
     train_trend = train_scaffold.with_columns(
         pl.col("naive_bridge")
         .rolling_mean(window_size=672, min_periods=1, center=True)
         .alias("macro_trend")
     )
 
-    # Isolate the 'Pure' Seasonality (Actual Demand minus the Macro Trend)
-    # This removes the summer/winter baseline and leaves only the daily schedule, centered near 0.
     train_detrended = train_trend.with_columns(
         (pl.col("actual_demand_mw") - pl.col("macro_trend")).alias(
             "detrended_signal"
@@ -198,7 +216,6 @@ def _(train_dataset):
         pl.col("timestamp").dt.time().alias("time_of_day"),
     )
 
-    # Calculate the seasonal median of ONLY the detrended swings
     train_swings = train_detrended.with_columns(
         pl.col("detrended_signal")
         .median()
@@ -206,7 +223,6 @@ def _(train_dataset):
         .alias("seasonal_swing")
     )
 
-    # Fill the gaps by adding the slowly moving Trend to the highly localized Seasonal Swing.
     train_imputed_clean = train_swings.with_columns(
         pl.col("actual_demand_mw")
         .fill_null(pl.col("macro_trend") + pl.col("seasonal_swing"))
@@ -229,7 +245,7 @@ def _(train_dataset):
 @app.cell
 def _():
     mo.callout(
-        """Even though we are just doing this for EDA, remember that calculating .median().over(["weekday", "time_of_day"]) across the whole training set means the imputed points in your massive May–July 2025 gap are technically 'looking ahead' at actual demand data from late 2025 and early 2026. This is perfectly fine for maintaining an unbroken timeline to visualize seasonal rhythms during EDA—especially since we safely flagged those fake points with is_imputed -- but it reinforces exactly why you must build a separate, strict, time-aware imputer for your actual cross-validation pipeline later.""",
+        """Seasonal median imputation is used solely for EDA visualizations and contains data leakage. It should not be used for final modeling.""",
         kind="danger",
     )
     return
@@ -251,7 +267,9 @@ def _():
 
 @app.cell
 def _(test_dataset, train_imputed_clean):
-    # utilsforecast requires 'unique_id', 'ds' (datetime), and 'y' (target) columns
+    """
+    Format data for visualization libraries.
+    """
     train_uf = train_imputed_clean.rename(
         {"timestamp": "ds", "actual_demand_mw_filled": "y"}
     ).with_columns(pl.lit("demand").alias("unique_id"))
@@ -275,6 +293,9 @@ def _(test_uf):
 
 @app.cell
 def _(test_uf, train_uf):
+    """
+    Visualize the energy demand series.
+    """
     fig_series = plot_series(train_uf, test_uf, engine="plotly")
     fig_series.show()
     return
@@ -282,6 +303,9 @@ def _(test_uf, train_uf):
 
 @app.cell
 def _(train_uf):
+    """
+    Apply manual outlier correction via interpolation for visual clarity.
+    """
     train_uf_ol = train_uf.with_columns(
         pl.when(
             pl.col("ds").is_in(
@@ -308,7 +332,6 @@ def _(test_uf, train_uf_ol):
 
 @app.cell
 def _():
-    # from eda data integrity
     Gaps = [
         ("2025-04-28", "2025-04-30"),
         ("2025-05-21", "2025-07-26"),
@@ -347,14 +370,14 @@ def _():
 
 @app.cell
 def _(train_uf_ol):
-    # Pass multiple seasonalities: Daily (96) and Weekly (96 * 7 = 672)
+    """
+    Perform MSTL decomposition to extract trend and seasonal components.
+    """
     mstl = MSTL(season_length=[96, 672, 20160])
     sf = StatsForecast(models=[mstl], freq="15min", n_jobs=-1)
 
     decomposition = sf.fit_predict(
-        df=train_uf_ol.select(
-            ["unique_id", "ds", "y"]
-        ).to_pandas(),  # SF prefers pandas
+        df=train_uf_ol.select(["unique_id", "ds", "y"]).to_pandas(),
         h=96,
         level=[90],
     )
@@ -365,15 +388,15 @@ def _(train_uf_ol):
 
 @app.cell
 def _(train_uf_ol):
-    # Create a feature that flags the high-variance months
+    """
+    Generate seasonal variance features.
+    """
     df_features = train_uf_ol.with_columns(
         pl.col("ds")
         .dt.month()
         .is_in([11, 12, 1, 2, 3])
         .cast(pl.Int8)
         .alias("is_high_variance_season"),
-        # Calculate a rolling 7-day standard deviation to feed the model the recent volatility
-        # (96 intervals * 7 days = 672)
         pl.col("y").rolling_std(window_size=672).alias("rolling_7d_volatility"),
     )
 
@@ -391,10 +414,11 @@ def _():
 
 @app.cell
 def _(train_uf_ol):
-    # Using standard statsmodels for the statistical test output
+    """
+    Apply Augmented Dickey-Fuller (ADF) test for stationarity.
+    """
     adf_result = adfuller(train_uf_ol["y"])
     print(f"ADF p-value: {adf_result[1]:.4f}")
-    print(f"ADF statistics: {adf_result[1]:.4f}")
     if adf_result[1] < 0.05:
         print("Series is stationary")
     else:
@@ -404,20 +428,18 @@ def _(train_uf_ol):
 
 @app.cell
 def _(train_uf_ol):
+    """
+    Apply Phillips-Perron test for stationarity.
+    """
     from arch.unitroot import PhillipsPerron
 
     pp_test = PhillipsPerron(train_uf_ol["y"].to_numpy(), lags=96)
 
     print(f"PP p-value: {pp_test.pvalue:.4f}")
-    print(f"PP statistics: {pp_test.stat:.4f}")
-
     if pp_test.pvalue < 0.05:
         print("Series is stationary")
     else:
         print("Series is non-stationary")
-
-    print("\nFull Summary:")
-    print(pp_test.summary().as_text())
     return
 
 
@@ -431,6 +453,9 @@ def _():
 
 @app.cell
 def _(train_uf_ol):
+    """
+    Plot ACF and PACF to identify autoregressive patterns and seasonal dependencies.
+    """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
     plot_acf(train_uf_ol["y"].to_numpy(), ax=ax1, lags=50)
     plot_pacf(train_uf_ol["y"].to_numpy(), ax=ax2, lags=50)
@@ -448,10 +473,13 @@ def _():
 
 @app.cell
 def _(test_uf, train_uf_ol):
+    """
+    Calculate univariate data drift between training and testing sets using NannyML.
+    Uses Kolmogorov-Smirnov and Jensen-Shannon methods.
+    """
     ref_df = train_uf_ol.to_pandas()
     ana_df = test_uf.to_pandas()
 
-    # Instantiate the Univariate Drift Calculator
     calc = nml.UnivariateDriftCalculator(
         column_names=["y"],
         timestamp_column_name="ds",
@@ -472,6 +500,9 @@ def _(test_uf, train_uf_ol):
 
 @app.cell
 def _(test_uf, train_uf_ol):
+    """
+    Evaluate drift specifically on seasonal residuals to detect underlying pattern changes.
+    """
     train_sr_clean = train_uf_ol.with_columns(
         (pl.col("y") - pl.col("y").shift(96)).alias("seasonal_residual")
     ).drop_nulls()
@@ -480,11 +511,9 @@ def _(test_uf, train_uf_ol):
         (pl.col("y") - pl.col("y").shift(96)).alias("seasonal_residual")
     ).drop_nulls()
 
-    # Convert back to Pandas for NannyML
     ref_sr_df = train_sr_clean.to_pandas()
     ana_sr_df = test_sr_clean.to_pandas()
 
-    # Instantiate the Calculator ON THE RESIDUALS, not the raw 'y'
     calc_sr = nml.UnivariateDriftCalculator(
         column_names=["seasonal_residual"],
         timestamp_column_name="ds",
@@ -505,32 +534,26 @@ def _(test_uf, train_uf_ol):
 
 @app.cell
 def _(train_uf_ol):
+    """
+    Apply Box-Cox and Log transformations for variance stabilization.
+    """
     import numpy as np
     from scipy.stats import boxcox
 
     df_engineered = train_uf_ol.with_columns(
-        # Create the 'high-volatility season' boolean feature for ML
-        # Months 11, 12, 1, 2, 3 map to True (1), all others to False (0)
         pl.col("ds")
         .dt.month()
         .is_in([11, 12, 1, 2, 3])
         .cast(pl.Int8)
         .alias("is_high_volatility_season"),
-        # Variance Stabilization: Natural Log transformation
-        # We use log1p (log(1+x)) as a best practice to safely handle any exact zeros
         pl.col("y").log1p().alias("y_log"),
     )
 
-    # Extract the 'y' column as a numpy array
     y_array = train_uf_ol.get_column("y").to_numpy()
-
-    # Calculate Box-Cox and capture the optimal lambda value
     y_boxcox, optimal_lambda = boxcox(y_array)
     print(f"Optimal Box-Cox lambda found: {optimal_lambda}")
 
-    # Add the Box-Cox transformed array as a new column in our Polars DataFrame
     df_engineered = df_engineered.with_columns(pl.Series("y_boxcox", y_boxcox))
-
     df_engineered.head()
     return (df_engineered,)
 
@@ -551,28 +574,22 @@ def _(df_engineered, test_uf):
 def _():
     mo.md(r"""
     ## Temporal Analysis of Electricity Demand
-
-    This section visualizes the `train_uf_ol` dataset to explore recurring patterns in power consumption, specifically focusing on monthly trends, daily fluctuations in April 2024, and the average demand across different days of the week.
     """)
     return
 
 
 @app.cell
 def _(train_uf_ol):
+    """
+    Visualize mean energy demand across different time scales: monthly, daily, and day of week.
+    """
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
-    # 1. Preprocessing: Ensure 'ds' is cast to a Datetime type.
-    # Polars does NOT use an index, so we just keep everything as standard columns.
-    # (If 'ds' is already a datetime type in your DataFrame, you can skip the cast)
     df = train_uf_ol.with_columns(pl.col("ds").cast(pl.Datetime))
 
-    # 2. Calculate the grouped data
-
-    # Monthly Average using group_by_dynamic
     monthly_mean = df.group_by_dynamic("ds", every="1mo").agg(pl.col("y").mean())
 
-    # Daily Average for April 2024
     daily_mean_apr = (
         df.filter(
             (pl.col("ds") >= datetime(2024, 4, 1))
@@ -582,29 +599,19 @@ def _(train_uf_ol):
         .agg(pl.col("y").mean())
     )
 
-    # Day of Week Average for 2024
-    # dt.weekday() returns 1 (Monday) to 7 (Sunday)
     dow_mean = (
         df.filter(pl.col("ds").dt.year() == 2024)
         .group_by(pl.col("ds").dt.weekday().alias("weekday"))
         .agg(pl.col("y").mean())
-        .sort("weekday")  # Crucial: ensures days stay in Mon-Sun order
+        .sort("weekday")
     )
 
     dow_labels = [
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-        "Sunday",
+        "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"
     ]
 
-    # 3. Create the Subplots layout (3 rows, 1 column)
     time_fig = make_subplots(
-        rows=3,
-        cols=1,
+        rows=3, cols=1,
         subplot_titles=(
             "Monthly Mean Demand",
             "Daily Mean Demand in April 2024",
@@ -613,21 +620,17 @@ def _(train_uf_ol):
         vertical_spacing=0.1,
     )
 
-    # 4. Add the traces
-    # Trace 1: Monthly
     time_fig.add_trace(
         go.Scatter(
-            x=monthly_mean["ds"],  # Passing Polars Series directly to Plotly
+            x=monthly_mean["ds"],
             y=monthly_mean["y"],
             mode="lines+markers",
             line=dict(color="limegreen"),
             name="Monthly Mean",
         ),
-        row=1,
-        col=1,
+        row=1, col=1,
     )
 
-    # Trace 2: Daily (April 2024)
     time_fig.add_trace(
         go.Scatter(
             x=daily_mean_apr["ds"],
@@ -636,11 +639,9 @@ def _(train_uf_ol):
             line=dict(color="limegreen"),
             name="Daily Mean",
         ),
-        row=2,
-        col=1,
+        row=2, col=1,
     )
 
-    # Trace 3: Day of Week
     time_fig.add_trace(
         go.Scatter(
             x=dow_labels,
@@ -649,11 +650,9 @@ def _(train_uf_ol):
             line=dict(color="limegreen"),
             name="DOW Mean",
         ),
-        row=3,
-        col=1,
+        row=3, col=1,
     )
 
-    # 5. Update formatting and axis labels
     time_fig.update_layout(
         height=1000,
         showlegend=False,
@@ -661,15 +660,6 @@ def _(train_uf_ol):
         title_x=0.5,
         template="plotly_white",
     )
-
-    time_fig.update_xaxes(title_text="Month", row=1, col=1)
-    time_fig.update_yaxes(title_text="Mean Demand (MW)", row=1, col=1)
-
-    time_fig.update_xaxes(title_text="Day", row=2, col=1)
-    time_fig.update_yaxes(title_text="Mean Demand (MW)", row=2, col=1)
-
-    time_fig.update_xaxes(title_text="Day of Week", row=3, col=1)
-    time_fig.update_yaxes(title_text="Mean Demand (MW)", row=3, col=1)
 
     time_fig.show()
     return

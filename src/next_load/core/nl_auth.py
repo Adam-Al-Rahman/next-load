@@ -1,46 +1,118 @@
+"""
+Authentication and secret management for Next Load project.
+Integrates with Infisical for secure credential retrieval and provides S3 and MLflow configurations.
+"""
+
 import os
 from functools import lru_cache
 
-import s3fs
+import boto3
+import requests
 from dotenv import load_dotenv
 from infisical_sdk import InfisicalSDKClient
 
 
 @lru_cache(maxsize=1)
-def get_s3_filesystem() -> s3fs.S3FileSystem:
-    """Authenticates with Infisical and returns a configured S3FileSystem for NextLoad."""
+def get_infisical_client(
+    infisical_host="https://app.infisical.com",
+) -> InfisicalSDKClient:
+    """
+    Initializes and authenticates the Infisical SDK client.
+    Supports OIDC auth for GitHub Actions and Universal Auth for local development.
+    """
     load_dotenv(override=True)
 
-    client = InfisicalSDKClient(host="https://app.infisical.com")
+    client = InfisicalSDKClient(host=infisical_host)
 
-    client.auth.universal_auth.login(
-        client_id=str(os.environ.get("INFISICAL_ELT_MACHINE_ID")),
-        client_secret=str(os.environ.get("INFISICAL_ELT_MACHINE_SECRET")),
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        identity_id = os.environ.get("INFISICAL_OIDC_IDENTITY_ID")
+        request_url = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL")
+        request_token = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+
+        if not request_url or not request_token:
+            raise ValueError(
+                "OIDC environment variables missing. "
+                "Ensure 'permissions: id-token: write' is set in your GitHub workflow."
+            )
+
+        response = requests.get(
+            request_url, headers={"Authorization": f"Bearer {request_token}"}
+        )
+        response.raise_for_status()
+        jwt_token = response.json()["value"]
+
+        client.auth.oidc_auth.login(identity_id=str(identity_id), jwt=jwt_token)
+    else:
+        client.auth.universal_auth.login(
+            client_id=str(os.environ.get("INFISICAL_ELT_MACHINE_ID")),
+            client_secret=str(os.environ.get("INFISICAL_ELT_MACHINE_SECRET")),
+        )
+
+    return client
+
+
+def get_infisical_secret(
+    secret_name: str,
+    default: str = None,  # ty:ignore[invalid-parameter-default]
+    project_id: str = "7286983c-eb71-4a94-8ffb-724d15eb5a2b",
+    env_slug: str = "prod",
+    secret_path: str = "/extract_load_transform_pipeline/aws",
+) -> str:
+    """
+    Retrieves a secret from Infisical by name.
+    Falls back to a default value or environment variable if retrieval fails.
+    """
+    client = get_infisical_client()
+    try:
+        return client.secrets.get_secret_by_name(
+            secret_name=secret_name,
+            project_id=project_id,
+            environment_slug=env_slug,
+            secret_path=secret_path,
+        ).secretValue
+    except Exception:
+        if default is not None:
+            return default
+        return os.environ.get(secret_name)
+
+
+@lru_cache(maxsize=1)
+def get_s3_client():
+    """
+    Configures and returns a Boto3 S3 client using credentials from Infisical.
+    """
+    aws_access_key = get_infisical_secret("AWS_ACCESS_KEY_ID")
+    aws_secret_key = get_infisical_secret("AWS_SECRET_ACCESS_KEY")
+    aws_region = get_infisical_secret("AWS_DEFAULT_REGION", default="asia-south1")
+    aws_endpoint = get_infisical_secret(
+        "AWS_ENDPOINT_URL", default="http://localhost:3900"
     )
 
-    secret_config = {
-        "project_id": "7286983c-eb71-4a94-8ffb-724d15eb5a2b",
-        "environment_slug": "dev",
-        "secret_path": "/extract_load_transform_pipeline/aws",
-    }
-
-    aws_access_key = client.secrets.get_secret_by_name(
-        secret_name="AWS_ACCESS_KEY_ID", **secret_config
-    ).secretValue
-
-    aws_secret_key = client.secrets.get_secret_by_name(
-        secret_name="AWS_SECRET_ACCESS_KEY", **secret_config
-    ).secretValue
-
-    aws_region = client.secrets.get_secret_by_name(
-        secret_name="AWS_DEFAULT_REGION", **secret_config
-    ).secretValue
-
-    return s3fs.S3FileSystem(
-        key=aws_access_key,
-        secret=aws_secret_key,
-        endpoint_url="http://localhost:3900",
-        client_kwargs={
-            "region_name": aws_region,
-        },
+    return boto3.client(
+        "s3",
+        aws_access_key_id=aws_access_key,
+        aws_secret_access_key=aws_secret_key,
+        region_name=aws_region,
+        endpoint_url=aws_endpoint,
     )
+
+
+def get_mlflow_tracking_uri() -> str:
+    """
+    Constructs the MLflow tracking URI for Turso database integration.
+    Falls back to a local SQLite database if Turso credentials are not available.
+    """
+    db_url = get_infisical_secret("TURSO_DATABASE_URL")
+    auth_token = get_infisical_secret("TURSO_AUTH_TOKEN")
+
+    if not db_url or not auth_token:
+        import logging  # noqa: PLC0415
+
+        logging.getLogger(__name__).warning(
+            "Turso secrets missing. Falling back to local MLflow SQLite."
+        )
+        return "sqlite:///mlflow.db"
+
+    hostname = db_url.replace("libsql://", "").replace("https://", "")
+
+    return f"sqlite+libsql://{hostname}/?authToken={auth_token}&secure=true"

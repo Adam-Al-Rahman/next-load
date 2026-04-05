@@ -11,8 +11,8 @@ dependencies = [
     "ipython>=8.10",
     "jupyterlab>=3.0",
     "notebook",
-    "kedro~=1.2.0",
-    "marimo>=0.21.0",
+    "kedro~=1.3.0",
+    "marimo>=0.22.0",
     "polars>=1.38.1",
     "kedro-viz>=12.3.0",
     "prefect>=3.6.21",
@@ -30,14 +30,18 @@ dependencies = [
     "httpx>=0.27.0",
     "infisicalsdk>=1.0.16",
     "python-calamine>=0.2.0",
+    "libsql-client>=0.3.1",
+    "sqlalchemy-libsql>=0.1.0",
     "fastexcel>=0.11.0",
     "mlflow==3.10.1",
     "dotenv>=0.9.9",
-    "bentoml>=1.4.36",
     "altair>=6.0.0",
     "statsforecast>=2.0.3",
     "utilsforecast>=0.2.15",
     "arch>=8.0.0",
+    "nannyml",
+    "mlforecast",
+    "mkdocs>=1.6.1",
 ]
 
 [project.scripts]
@@ -117,3 +121,17 @@ pythonpath = ["src", "src/next_load"]
 
 [tool.marimo.display]
 custom_css = ["./marimo.css"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4.4",
+    "python-lsp-server>=1.14.0",
+    "ruff>=0.12.12",
+    "ty>=0.0.24",
+    "websockets>=16.0",
+]
+
+[tool.uv]
+required-environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]

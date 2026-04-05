@@ -1,5 +1,9 @@
-from __future__ import annotations
+"""
+Kedro pipeline for Extract Load and Transform (ELT) operations.
+Coordinates scraping, downloading, and initial transformation of NRLDC data.
+"""
 
+from __future__ import annotations
 import asyncio
 import io
 import logging
@@ -7,18 +11,15 @@ import ssl
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
-
 import httpx
 import mlflow
 import pandas as pd
 import polars as pl
 from kedro.pipeline import Pipeline, node, pipeline
-
 from next_load.pipelines.extract_load_transform.elt_config import (
     S3Config,
     ScraperConfig,
 )
-
 from .extract_nrldc_forecast import extract_nrldc_data
 from .transform_nrldc_forecast import (
     transform_single_partition,
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 def create_unsafe_ssl_context():
     """
-    Creates an SSL context that allows legacy server connections.
+    Creates an SSL context that allows legacy server connections for older government portals.
     """
     context = ssl.create_default_context()
     context.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0x4)
@@ -39,7 +40,9 @@ def create_unsafe_ssl_context():
 
 
 async def download_file(client: httpx.AsyncClient, url: str) -> bytes:
-    """Helper to download a file asynchronously."""
+    """
+    Downloads a file asynchronously using the provided HTTP client.
+    """
     try:
         response = await client.get(url, timeout=60.0)
         response.raise_for_status()
@@ -51,18 +54,17 @@ async def download_file(client: httpx.AsyncClient, url: str) -> bytes:
 
 async def run_scraper_partitioned(
     scraper_config: ScraperConfig,
-) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
+) -> tuple[dict[str, pl.DataFrame], dict[str, pl.DataFrame]]:
     """
-    Executes the Marimo async generator and partitions results by Month/Year.
+    Runs the asynchronous scraper and partitions the results by year and month.
+    Downloads associated Excel files and stores them as Polars DataFrames in a dictionary.
     """
     metadata_partitions = {}
     file_partitions = {}
-
     ssl_context = create_unsafe_ssl_context()
 
     async with httpx.AsyncClient(verify=ssl_context) as client:
         async for raw_data_batch, year, month in extract_nrldc_data(scraper_config):
-            # 1. Metadata Partition (YYYY_MM)
             pl_df = pl.DataFrame(raw_data_batch)
 
             try:
@@ -71,17 +73,14 @@ async def run_scraper_partitioned(
             except ValueError:
                 partition_key = f"{year}_{month}"
 
-            metadata_partitions[partition_key] = pl_df.to_pandas()
+            metadata_partitions[partition_key] = pl_df
 
-            # 2. File Partitions (data/YYYY/Month/filename.xlsx)
             for item in raw_data_batch:
                 link = item.get("download_link")
                 name = item.get("file_name")
                 if link and name:
                     file_name_clean = name.replace(".xlsx", "").replace(".XLSX", "")
                     file_key = f"{year}/{month}/{file_name_clean}"
-
-                    logger.info(f"Downloading and parsing {name}...")
                     file_content = await download_file(client, link)
                     if file_content:
                         try:
@@ -90,7 +89,7 @@ async def run_scraper_partitioned(
                                 engine="calamine",
                                 has_header=False,
                             )
-                            file_partitions[file_key] = raw_df.to_pandas()
+                            file_partitions[file_key] = raw_df
                         except Exception as e:
                             logger.error(f"Failed to parse Excel {name}: {e}")
 
@@ -99,18 +98,19 @@ async def run_scraper_partitioned(
 
 def scrape_and_partition_nrldc_node(
     params: dict[str, Any],
-) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
+) -> tuple[dict[str, pl.DataFrame], dict[str, pl.DataFrame]]:
     """
-    Kedro node to run the scraping and downloading process.
+    Kedro node that triggers the asynchronous scraping and partitioning process.
+    Configures storage and scraper settings before execution.
     """
-    s3_params = params.get("s3", {})
+    from next_load.core.nl_auth import get_infisical_secret
 
     s3_config = S3Config(
-        endpoint_url=s3_params.get("endpoint_url", "http://localhost:3900"),
-        region_name=s3_params.get("region_name", "asia-south1"),
-        bucket_name=s3_params.get("bucket_name", "next-load-data"),
-        access_key=s3_params.get("access_key", ""),
-        secret_key=s3_params.get("secret_key", ""),
+        endpoint_url=get_infisical_secret("AWS_ENDPOINT_URL"),
+        region_name=get_infisical_secret("AWS_DEFAULT_REGION"),
+        bucket_name=get_infisical_secret("BUCKET_NAME"),
+        access_key=get_infisical_secret("AWS_ACCESS_KEY_ID"),
+        secret_key=get_infisical_secret("AWS_SECRET_ACCESS_KEY"),
     )
 
     scraper_config = ScraperConfig(
@@ -123,22 +123,17 @@ def scrape_and_partition_nrldc_node(
 
 
 def validate_raw_partitions_node(
-    partitioned_input: dict[str, Callable[[], pd.DataFrame]],
-) -> dict[str, pd.DataFrame]:
+    partitioned_input: dict[str, Callable[[], pl.DataFrame]],
+) -> dict[str, pl.DataFrame]:
     """
-    Separate Node: Data Contract 'Before Transformation'.
-    Filters partitions that do not match the expected Excel structure.
+    Kedro node for validating raw Excel file partitions against expected schemas.
+    Logs validation metrics to MLflow.
     """
     validated_partitions = {}
     success_count = 0
     fail_count = 0
 
-    logger.info(f"Validating {len(partitioned_input)} raw partitions.")
-
     for partition_key, loader in partitioned_input.items():
-        # loader is a callable for S3-sourced PartitionedDataset
-        # but for MemoryDataset it might be the data itself if passed incorrectly
-        # Kedro passes callables for PartitionedDataset.
         try:
             df = loader()
             if validate_raw_excel_dataframe(df, partition_key):
@@ -158,30 +153,28 @@ def validate_raw_partitions_node(
 
 
 def transform_forecast_partitions_node(
-    validated_input: dict[str, pd.DataFrame],
-) -> pd.DataFrame:
+    validated_input: dict[str, pl.DataFrame],
+) -> pl.DataFrame:
     """
-    Separate Node: Transformation logic.
-    Converts multiple Excel-sourced DataFrames into a single primary DataFrame.
-    Note: Input is from MemoryDataset, so it's a dict of DataFrames (NOT callables).
+    Kedro node that applies transformation logic to all validated raw partitions.
+    Concatenates individual partitions into a single sorted DataFrame.
     """
     all_dfs = []
-
-    logger.info(f"Transforming {len(validated_input)} validated partitions.")
-
     for partition_key, df in validated_input.items():
         transformed_pl_df = transform_single_partition(df, partition_key)
         if transformed_pl_df is not None:
             all_dfs.append(transformed_pl_df)
 
     if not all_dfs:
-        return pd.DataFrame()
+        return pl.DataFrame()
 
-    primary_df = pl.concat(all_dfs).sort(["date", "period"])
-    return primary_df.to_pandas()
+    return pl.concat(all_dfs).sort(["date", "period"])
 
 
 def create_pipeline(**kwargs) -> Pipeline:
+    """
+    Defines the complete ELT pipeline structure.
+    """
     return pipeline(
         [
             node(
