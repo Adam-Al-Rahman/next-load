@@ -26,6 +26,7 @@ class RawNRLDCForecastMetadataSchema(DataFrameModel):
     """
     Schema definition for validating the metadata headers in the raw Excel files.
     """
+
     report_title: str = Field(eq="Northern Regional Load Despatch Centre (NRLDC)")
     date_value: str = Field(nullable=True)
     period: str = Field(eq="Period")
@@ -38,6 +39,7 @@ class RawNRLDCForecastTabularDataSchema(DataFrameModel):
     """
     Schema definition for validating the tabular demand data in the raw Excel files.
     """
+
     period: str = Field(str_matches=r"^\d{2}:\d{2}\s*-\s*\d{2}:\d{2}$")
     nrldc_intraday_forecasted_demand_mw: str = Field(
         str_matches=r"^(-?\d+(\.\d+)?)?$", nullable=True
@@ -50,6 +52,7 @@ class TransformedRawNRLDCForecastDataSchema(DataFrameModel):
     """
     Schema definition for the final transformed and unified data table.
     """
+
     date: datetime.datetime
     period: str = Field(str_matches=r"^\d{2}:\d{2}\s*-\s*\d{2}:\d{2}$")
     actual_demand_mw: float = Field(nullable=True)
@@ -162,7 +165,7 @@ def validate_transformed_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     Ensures the final output matches the TransformedRawNRLDCForecastDataSchema.
     """
     if df["date"].dtype != pl.Datetime:
-         df = df.with_columns(pl.col("date").cast(pl.Datetime))
+        df = df.with_columns(pl.col("date").cast(pl.Datetime))
 
     TransformedRawNRLDCForecastDataSchema.validate(df)
     return df

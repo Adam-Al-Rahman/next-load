@@ -1,6 +1,5 @@
 """
-This is a boilerplate pipeline 'candidate_models'
-generated using Kedro 1.2.0
+Candidate models pipeline initialization
 """
 
 from .pipeline import create_pipeline

@@ -1,6 +1,5 @@
 """
-Marimo notebook for exploring and training candidate LightGBM and Neural models.
-Implements complex feature engineering, hyperparameter tuning with Optuna, and comparative evaluation.
+Notebook for training and evaluating LightGBM and neural models
 """
 
 import marimo
@@ -45,7 +44,7 @@ with app.setup:
 @app.cell
 def _():
     """
-    Import and aggregate previous project insights.
+    Aggregate insights from data preprocessing and integrity modules
     """
     from next_load.pipelines.data_processing.preprocessing import (
         DATA_PREPROCESSING_INSIGHTS,
@@ -76,14 +75,12 @@ def _():
 @app.function
 def get_polars_storage_options():
     """
-    Retrieves S3 credentials and formats them for Polars read/write operations.
+    Retrieve storage credentials for S3 operations
     """
     return {
         "aws_access_key_id": get_infisical_secret("AWS_ACCESS_KEY_ID"),
         "aws_secret_access_key": get_infisical_secret("AWS_SECRET_ACCESS_KEY"),
-        "aws_region": get_infisical_secret(
-            "AWS_DEFAULT_REGION", default="asia-south1"
-        ),
+        "aws_region": get_infisical_secret("AWS_DEFAULT_REGION", default="asia-south1"),
         "aws_endpoint_url": get_infisical_secret(
             "AWS_ENDPOINT_URL", default="http://localhost:3900"
         ),
@@ -93,7 +90,7 @@ def get_polars_storage_options():
 @app.cell
 def _():
     """
-    Load train and test datasets from S3.
+    Load training and testing datasets from storage
     """
     pl_storage_options = get_polars_storage_options()
 
@@ -129,7 +126,7 @@ def _():
 @app.cell
 def _(train_dataset):
     """
-    Identify missing target values in training data.
+    Identify missing target values in training data
     """
     missing_timestamps = train_dataset.filter(pl.col("actual_demand_mw").is_null())
     return (missing_timestamps,)
@@ -138,7 +135,7 @@ def _(train_dataset):
 @app.cell
 def _(missing_timestamps):
     """
-    Aggregate missing timestamps into continuous blocks for training gap analysis.
+    Analyze gaps in training data by grouping missing timestamps
     """
     missing_blocks = (
         missing_timestamps.sort("timestamp")
@@ -168,18 +165,16 @@ def _(missing_timestamps):
 @app.cell
 def _(test_dataset):
     """
-    Identify missing values in testing data.
+    Identify missing target values in testing data
     """
-    test_missing_timestamps = test_dataset.filter(
-        pl.col("actual_demand_mw").is_null()
-    )
+    test_missing_timestamps = test_dataset.filter(pl.col("actual_demand_mw").is_null())
     return (test_missing_timestamps,)
 
 
 @app.cell
 def _(test_missing_timestamps):
     """
-    Aggregate missing timestamps into continuous blocks for testing gap analysis.
+    Analyze gaps in testing data by grouping missing timestamps
     """
     test_missing_blocks = (
         test_missing_timestamps.sort("timestamp")
@@ -217,8 +212,7 @@ def _():
 @app.function
 def build_features(df: pl.DataFrame, parameters: dict) -> pl.DataFrame:
     """
-    Applies cyclical encoding and creates historical anchors for demand.
-    Identifies and nullifies known outliers before feature generation.
+    Create historical and cyclical features for demand forecasting
     """
     date_col = parameters["date_column"]
     target_col = parameters["target_column"]
@@ -240,9 +234,9 @@ def build_features(df: pl.DataFrame, parameters: dict) -> pl.DataFrame:
 
     df = df.with_columns(
         [
-            (
-                pl.col(date_col).dt.hour() + pl.col(date_col).dt.minute() / 60.0
-            ).alias("decimal_hour"),
+            (pl.col(date_col).dt.hour() + pl.col(date_col).dt.minute() / 60.0).alias(
+                "decimal_hour"
+            ),
             pl.col(date_col).dt.weekday().alias("weekday_int"),
             pl.col(date_col).dt.ordinal_day().alias("dayofyear_int"),
         ]
@@ -252,19 +246,11 @@ def build_features(df: pl.DataFrame, parameters: dict) -> pl.DataFrame:
             np.cos(2 * np.pi * pl.col("decimal_hour") / 24).alias("cos_hour"),
             np.sin(2 * np.pi * pl.col("weekday_int") / 7).alias("sin_weekday"),
             np.cos(2 * np.pi * pl.col("weekday_int") / 7).alias("cos_weekday"),
-            np.sin(2 * np.pi * pl.col("dayofyear_int") / 365).alias(
-                "sin_dayofyear"
-            ),
-            np.cos(2 * np.pi * pl.col("dayofyear_int") / 365).alias(
-                "cos_dayofyear"
-            ),
+            np.sin(2 * np.pi * pl.col("dayofyear_int") / 365).alias("sin_dayofyear"),
+            np.cos(2 * np.pi * pl.col("dayofyear_int") / 365).alias("cos_dayofyear"),
             pl.col(target_col).shift(96).alias("y_yesterday"),
-            pl.col(target_col)
-            .shift(672)
-            .alias("y_last_week"),
-            pl.col(target_col)
-            .shift(34944)
-            .alias("y_last_year"),
+            pl.col(target_col).shift(672).alias("y_last_week"),
+            pl.col(target_col).shift(34944).alias("y_last_year"),
         ]
     )
     return df
@@ -273,8 +259,7 @@ def build_features(df: pl.DataFrame, parameters: dict) -> pl.DataFrame:
 @app.function
 def impute_data(df: pl.DataFrame, parameters: dict) -> pl.DataFrame:
     """
-    Implements IQR-based outlier detection and LightGBM imputation.
-    Fills missing values by training a predictive model on known data points.
+    Impute missing values using outlier detection and LightGBM
     """
     if not isinstance(df, pl.DataFrame):
         df = pl.from_pandas(df)
@@ -292,10 +277,7 @@ def impute_data(df: pl.DataFrame, parameters: dict) -> pl.DataFrame:
     upper_bound = q3 + iqr_mult * iqr
 
     df = df.with_columns(
-        pl.when(
-            (pl.col(target_col) < lower_bound)
-            | (pl.col(target_col) > upper_bound)
-        )
+        pl.when((pl.col(target_col) < lower_bound) | (pl.col(target_col) > upper_bound))
         .then(None)
         .otherwise(pl.col(target_col))
         .alias(target_col)
@@ -370,7 +352,7 @@ def _(train_ft):
 @app.cell
 def _(imputed_train_data):
     """
-    Finalize training features by adding a high-volatility season flag.
+    Flag high volatility seasons in training data
     """
     train_ft_data = imputed_train_data.with_columns(
         pl.col("timestamp")
@@ -407,7 +389,7 @@ def _(impute_params, test_ft):
 @app.cell
 def _(imputed_test_data):
     """
-    Finalize testing features.
+    Flag high volatility seasons in testing data
     """
     test_ft_data = imputed_test_data.with_columns(
         pl.col("timestamp")
@@ -431,16 +413,17 @@ def _():
 @app.cell
 def _(test_ft_data, train_ft_data):
     """
-    Train and evaluate a deep learning ensemble using TiDE and NHITS.
-    Implements topological feature engineering and generates a 24-hour ahead forecast.
+    Train and evaluate neural models using Fourier features
     """
     import os
 
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     torch.set_float32_matmul_precision("medium")
 
-
     def build_fourier_features(df: pl.DataFrame) -> pl.DataFrame:
+        """
+        Generate Fourier series features for seasonal patterns
+        """
         exprs = []
         for k in range(1, 6):
             phase = (2 * np.pi * k * pl.col("decimal_hour")) / 24.0
@@ -456,13 +439,10 @@ def _(test_ft_data, train_ft_data):
 
         return df.with_columns(exprs)
 
-
     train_df = train_ft_data.clone().rename(
         {"timestamp": "ds", "actual_demand_mw": "y"}
     )
-    test_df = test_ft_data.clone().rename(
-        {"timestamp": "ds", "actual_demand_mw": "y"}
-    )
+    test_df = test_ft_data.clone().rename({"timestamp": "ds", "actual_demand_mw": "y"})
 
     train_df = train_df.with_columns(
         [pl.col("ds").cast(pl.Datetime("us")), pl.lit("grid_1").alias("unique_id")]
@@ -528,9 +508,9 @@ def _(test_ft_data, train_ft_data):
 
         expected_pl = expected_pl.with_columns(
             [
-                (
-                    (pl.col("ds").dt.hour() * 60 + pl.col("ds").dt.minute()) / 60.0
-                ).alias("decimal_hour"),
+                ((pl.col("ds").dt.hour() * 60 + pl.col("ds").dt.minute()) / 60.0).alias(
+                    "decimal_hour"
+                ),
                 pl.col("ds").dt.weekday().alias("weekday_int"),
                 pl.col("ds").dt.ordinal_day().alias("dayofyear_int"),
                 pl.lit(

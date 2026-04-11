@@ -1,7 +1,5 @@
-"""
-Kedro project settings for Next Load.
-Configures environment variables for AWS and MLflow, and defines custom resolvers for secret management.
-"""
+# Next Load project settings for Kedro.
+# Configures AWS and MLflow environment variables and custom resolvers.
 
 import os
 
@@ -30,9 +28,7 @@ HOOKS = (MlflowHook(),)
 
 
 def infisical_resolver(secret_name, default=None):
-    """
-    Custom OmegaConf resolver to retrieve secrets directly from Infisical.
-    """
+    # Fetches secrets from Infisical for configuration.
     return get_infisical_secret(secret_name, default=default)
 
 

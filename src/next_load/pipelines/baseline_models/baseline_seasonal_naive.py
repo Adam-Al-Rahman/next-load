@@ -1,6 +1,5 @@
 """
-Marimo notebook for building and evaluating the Seasonal Naive baseline model.
-Includes data loading, gap analysis, time-aware imputation, cross-validation, and performance visualization.
+Seasonal naive model implementation.
 """
 
 import marimo
@@ -12,7 +11,7 @@ app = marimo.App(width="full", auto_download=["ipynb"])
 @app.cell
 def _():
     """
-    Import necessary libraries for data processing, modeling, and visualization.
+    Library imports.
     """
     from concurrent.futures import ProcessPoolExecutor, as_completed
     from datetime import datetime
@@ -62,7 +61,7 @@ def _():
 @app.cell
 def _(pl):
     """
-    Load and display previous insights from data integrity and univariate analysis.
+    Load data insights.
     """
     from next_load.pipelines.data_processing.preprocessing import (
         DATA_PREPROCESSING_INSIGHTS,
@@ -82,18 +81,10 @@ def _(pl):
     return
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    # Baseline Model: Seasonal Naive
-    """)
-    return
-
-
 @app.cell
 def _(get_infisical_secret, pl, pq, s3fs):
     """
-    Establish S3 connection and load the train and test datasets.
+    Load datasets from S3.
     """
     S3_FS = s3fs.S3FileSystem(
         key=get_infisical_secret("AWS_ACCESS_KEY_ID"),
@@ -125,18 +116,10 @@ def _(train_dataset):
     return
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Time Gap
-    """)
-    return
-
-
 @app.cell
 def _(pl, train_dataset):
     """
-    Identify missing timestamps in the training dataset.
+    Identify missing data.
     """
     missing_timestamps = train_dataset.filter(pl.col("actual_demand_mw").is_null())
     return (missing_timestamps,)
@@ -145,7 +128,7 @@ def _(pl, train_dataset):
 @app.cell
 def _(missing_timestamps, pl):
     """
-    Aggregate missing timestamps into continuous blocks for analysis.
+    Group missing data.
     """
     missing_blocks = (
         missing_timestamps.sort("timestamp")
@@ -172,19 +155,10 @@ def _(missing_timestamps, pl):
     return
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Fake Imputation
-    """)
-    return
-
-
 @app.cell
 def _(pl, train_dataset):
     """
-    Apply a simple median-based seasonal imputation for exploratory visualization.
-    Calculates median demand per weekday and time-of-day after removing macro trends.
+    Impute for visualization.
     """
     train_resampled = train_dataset.upsample(time_column="timestamp", every="15m")
 
@@ -203,9 +177,7 @@ def _(pl, train_dataset):
     )
 
     train_detrended = train_trend.with_columns(
-        (pl.col("actual_demand_mw") - pl.col("macro_trend")).alias(
-            "detrended_signal"
-        ),
+        (pl.col("actual_demand_mw") - pl.col("macro_trend")).alias("detrended_signal"),
         pl.col("timestamp").dt.weekday().alias("weekday"),
         pl.col("timestamp").dt.time().alias("time_of_day"),
     )
@@ -237,19 +209,9 @@ def _(pl, train_dataset):
 
 
 @app.cell
-def _(mo):
-    mo.callout(
-        """Median-based seasonal imputation is only for visualization during EDA. This approach uses global information from the future and should not be used for model training or cross-validation.""",
-        kind="danger",
-    )
-    return
-
-
-@app.cell
 def _(pl, test_dataset, train_imputed_clean):
     """
-    Format datasets for the utilsforecast library.
-    Requires columns: unique_id, ds (timestamp), and y (target).
+    Prepare for evaluation.
     """
     train_uf = train_imputed_clean.rename(
         {"timestamp": "ds", "actual_demand_mw_filled": "y"}
@@ -263,7 +225,7 @@ def _(pl, test_dataset, train_imputed_clean):
 @app.cell
 def _(datetime, pl, train_uf):
     """
-    Manually flag and interpolate known outliers identified in univariate analysis.
+    Handle outliers.
     """
     target_dates = [
         datetime(2024, 11, 21, 14, 45, 0),
@@ -273,16 +235,12 @@ def _(datetime, pl, train_uf):
 
     train_uf_ol = train_uf.with_columns(
         y=pl.when(pl.col("ds").is_in(target_series.implode()))
-        .then(
-            pl.lit(None, dtype=pl.Float64)
-        )
+        .then(pl.lit(None, dtype=pl.Float64))
         .otherwise(pl.col("y"))
         .interpolate(),
         is_imputed=pl.when(pl.col("ds").is_in(target_series.implode()))
         .then(True)
-        .otherwise(
-            pl.col("is_imputed") if "is_imputed" in train_uf.columns else False
-        ),
+        .otherwise(pl.col("is_imputed") if "is_imputed" in train_uf.columns else False),
     )
     return (train_uf_ol,)
 
@@ -290,7 +248,7 @@ def _(datetime, pl, train_uf):
 @app.cell
 def _(plot_series, test_uf, train_uf_ol):
     """
-    Visualize the training and testing series using Plotly.
+    Visualize data.
     """
     plot_series(
         train_uf_ol.select(["ds", "y", "unique_id"]),
@@ -309,7 +267,7 @@ def _(train_uf_ol):
 @app.cell
 def _(px, train_uf_ol):
     """
-    Plot demand values highlighting imputed points.
+    Plot imputed data.
     """
     dm_fig = px.scatter(
         train_uf_ol,
@@ -333,7 +291,7 @@ def _(px, train_uf_ol):
 @app.cell
 def _(pl, train_uf_ol):
     """
-    Engineer seasonal features and calculate rolling volatility.
+    Create features.
     """
     df_features = train_uf_ol.with_columns(
         pl.col("ds")
@@ -348,18 +306,10 @@ def _(pl, train_uf_ol):
     return
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Model: Train
-    """)
-    return
-
-
 @app.cell
 def _(datetime, pl, train_dataset):
     """
-    Prepare the main dataset for training by applying outlier nullification.
+    Prepare dataset.
     """
     dataset = train_dataset.with_columns(
         [
@@ -386,8 +336,7 @@ def _(datetime, pl, train_dataset):
 def _(np, pl):
     def build_ts_features(df: pl.DataFrame) -> pl.DataFrame:
         """
-        Applies cyclical encoding and historical anchors to the DataFrame.
-        Includes weekday, hour, and day of year sin/cos encodings plus 1-day, 1-week, and 1-year lags.
+        Create time series features.
         """
         df = df.with_columns(
             [
@@ -423,8 +372,7 @@ def _(np, pl):
 def _(lgb, pl):
     def impute_time_series_fold(train_fold: pl.DataFrame) -> pl.DataFrame:
         """
-        Performs iterative imputation for a single cross-validation fold using LightGBM.
-        Identifies outliers using IQR, nullifies them, and then predicts values based on features.
+        Impute single fold.
         """
         q1 = train_fold["y"].quantile(0.25)
         q3 = train_fold["y"].quantile(0.75)
@@ -468,9 +416,7 @@ def _(lgb, pl):
                 verbose=-1,
             )
 
-            gbm.fit(
-                known_data.select(features).to_numpy(), known_data["y"].to_numpy()
-            )
+            gbm.fit(known_data.select(features).to_numpy(), known_data["y"].to_numpy())
             imputed_y = gbm.predict(missing_data.select(features).to_numpy())
 
             imputed_df = missing_data.with_columns(pl.Series("y", imputed_y))
@@ -492,8 +438,7 @@ def _(
     pl,
 ):
     """
-    Execute a Walk-Forward Cross-Validation loop for the Seasonal Naive model.
-    Applies per-fold imputation to ensure realistic evaluation without data leakage.
+    Run cross validation.
     """
     DAILY_SEASON = 96
     HORIZON = 8
@@ -550,7 +495,7 @@ def _(
 @app.cell
 def _(all_predictions, evaluate, mae, mape, pl, rmse):
     """
-    Aggregate cross-validation results and calculate performance metrics.
+    Calculate metrics.
     """
     results_df = pl.concat(all_predictions)
 
@@ -568,7 +513,7 @@ def _(all_predictions, evaluate, mae, mape, pl, rmse):
 @app.cell
 def _(evaluation_df):
     """
-    Analyze performance across folds to identify the worst cases.
+    Find worst folds.
     """
     mape_only = evaluation_df[evaluation_df["metric"] == "mape"]
     worst_folds = mape_only.sort_values(by="SeasonalNaive", ascending=False)
@@ -580,7 +525,7 @@ def _(evaluation_df):
 @app.cell
 def _(df, final_imputed_state, go, make_subplots, pl, results_df):
     """
-    Generate diagnostic plots for imputation verification and forecast evaluation.
+    Plot results.
     """
     fig = make_subplots(
         rows=2,

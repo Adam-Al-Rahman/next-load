@@ -93,9 +93,10 @@ def _(get_infisical_secret, s3fs):
     S3_FS = s3fs.S3FileSystem(
         key=get_infisical_secret("AWS_ACCESS_KEY_ID"),
         secret=get_infisical_secret("AWS_SECRET_ACCESS_KEY"),
-        endpoint_url=get_infisical_secret("AWS_ENDPOINT_URL") or "http://localhost:3900",
+        endpoint_url=get_infisical_secret("AWS_ENDPOINT_URL")
+        or "http://localhost:3900",
         client_kwargs={"region_name": get_infisical_secret("AWS_DEFAULT_REGION")},
-        config_kwargs={"s3": {"addressing_style": "path"}}
+        config_kwargs={"s3": {"addressing_style": "path"}},
     )
     train_dataset = pl.from_arrow(
         pq.ParquetDataset(
@@ -209,9 +210,7 @@ def _(train_dataset):
     )
 
     train_detrended = train_trend.with_columns(
-        (pl.col("actual_demand_mw") - pl.col("macro_trend")).alias(
-            "detrended_signal"
-        ),
+        (pl.col("actual_demand_mw") - pl.col("macro_trend")).alias("detrended_signal"),
         pl.col("timestamp").dt.weekday().alias("weekday"),
         pl.col("timestamp").dt.time().alias("time_of_day"),
     )
@@ -607,11 +606,18 @@ def _(train_uf_ol):
     )
 
     dow_labels = [
-        "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
     ]
 
     time_fig = make_subplots(
-        rows=3, cols=1,
+        rows=3,
+        cols=1,
         subplot_titles=(
             "Monthly Mean Demand",
             "Daily Mean Demand in April 2024",
@@ -628,7 +634,8 @@ def _(train_uf_ol):
             line=dict(color="limegreen"),
             name="Monthly Mean",
         ),
-        row=1, col=1,
+        row=1,
+        col=1,
     )
 
     time_fig.add_trace(
@@ -639,7 +646,8 @@ def _(train_uf_ol):
             line=dict(color="limegreen"),
             name="Daily Mean",
         ),
-        row=2, col=1,
+        row=2,
+        col=1,
     )
 
     time_fig.add_trace(
@@ -650,7 +658,8 @@ def _(train_uf_ol):
             line=dict(color="limegreen"),
             name="DOW Mean",
         ),
-        row=3, col=1,
+        row=3,
+        col=1,
     )
 
     time_fig.update_layout(

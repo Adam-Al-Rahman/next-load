@@ -57,6 +57,18 @@ primary_nrldc_forecast:
       layer: processed
 
 # Preprocessed Data
+preprocessed_dataset_raw:
+  type: MemoryDataset
+  metadata:
+    kedro-viz:
+      layer: processed
+
+preprocessed_dataset_with_features:
+  type: MemoryDataset
+  metadata:
+    kedro-viz:
+      layer: processed
+
 preprocessed_dataset:
   type: polars.EagerPolarsDataset
   filepath: s3://${infisical:BUCKET_NAME, "next-load-data"}/processed/01_primary/preprocessed_dataset.parquet
@@ -113,31 +125,39 @@ baseline_model:
 train_with_exog:
   type: MemoryDataset
   metadata:
-    layer: candidate_models
+    kedro-viz:
+      layer: candidate_models
 
 test_with_exog:
   type: MemoryDataset
   metadata:
-    layer: candidate_models
+    kedro-viz:
+      layer: candidate_models
 
 train_imputed:
   type: MemoryDataset
   metadata:
-    layer: candidate_models
+    kedro-viz:
+      layer: candidate_models
 
 lgbm_candidate_models:
   type: MemoryDataset
   metadata:
-    layer: candidate_models
+    kedro-viz:
+      layer: candidate_models
 
 neural_candidate_model:
   type: MemoryDataset
   metadata:
-    layer: candidate_models
+    kedro-viz:
+      layer: candidate_models
 
 candidate_metrics:
   type: kedro_mlflow.io.metrics.MlflowMetricsHistoryDataset
   prefix: "candidate"
+  metadata:
+    kedro-viz:
+      layer: candidate_models
 
 
 

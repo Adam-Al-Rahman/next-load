@@ -1,7 +1,4 @@
-"""
-Processing nodes for the baseline models pipeline.
-Includes an MLflow wrapper for StatsForecast and functions for feature engineering, imputation, and model training.
-"""
+# Nodes for baseline models pipeline using StatsForecast.
 
 from __future__ import annotations
 import logging
@@ -22,10 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class StatsForecastWrapper(mlflow.pyfunc.PythonModel):
-    """
-    Custom MLflow wrapper for StatsForecast models.
-    Enables model registration and prediction through the standard MLflow interface.
-    """
+    # Custom MLflow wrapper for StatsForecast models.
 
     def __init__(self, model: StatsForecast):
         self.model = model
@@ -36,9 +30,7 @@ class StatsForecastWrapper(mlflow.pyfunc.PythonModel):
         model_input: pl.DataFrame | np.ndarray,
         params: dict[str, Any] | None = None,
     ) -> np.ndarray:
-        """
-        Generates predictions for a given horizon or input DataFrame.
-        """
+        # Generates predictions for a given horizon or input DataFrame.
         if isinstance(model_input, int | np.integer):
             h = int(model_input)
         else:
@@ -49,10 +41,7 @@ class StatsForecastWrapper(mlflow.pyfunc.PythonModel):
 
 
 def build_baseline_features(df: pl.DataFrame, parameters: dict) -> pl.DataFrame:
-    """
-    Generates baseline features including cyclical time encodings and historical lags.
-    Also handles initial outlier detection by nullifying known problematic dates.
-    """
+    # Generates baseline features and handles outlier detection.
     date_col = parameters["date_column"]
     target_col = parameters["target_column"]
 
@@ -93,10 +82,7 @@ def build_baseline_features(df: pl.DataFrame, parameters: dict) -> pl.DataFrame:
 
 
 def impute_baseline_data(df: pl.DataFrame, parameters: dict) -> pl.DataFrame:
-    """
-    Imputes missing target values using an IQR-based outlier detection and LightGBM.
-    Identifies outliers, marks them as null, and then trains a LightGBM booster to predict replacement values.
-    """
+    # Imputes missing target values using LightGBM.
     if not isinstance(df, pl.DataFrame):
         df = pl.from_pandas(df)
 
@@ -137,8 +123,12 @@ def impute_baseline_data(df: pl.DataFrame, parameters: dict) -> pl.DataFrame:
 
         train_ds = lgb.Dataset(X_train, label=y_train)
         num_boost_round = lgb_params.pop("n_estimators", 100)
-        native_params = {k: v for k, v in lgb_params.items() if k not in ["silent", "importance_type"]}
-        
+        native_params = {
+            k: v
+            for k, v in lgb_params.items()
+            if k not in ["silent", "importance_type"]
+        }
+
         gbm = lgb.train(native_params, train_ds, num_boost_round=num_boost_round)
         imputed_y = gbm.predict(X_miss)
 
@@ -154,10 +144,7 @@ def impute_baseline_data(df: pl.DataFrame, parameters: dict) -> pl.DataFrame:
 def train_evaluate_baseline_model(
     train_df: pl.DataFrame, test_df: pl.DataFrame, parameters: dict
 ) -> tuple[dict, StatsForecastWrapper]:
-    """
-    Trains a Seasonal Naive model and evaluates its performance on the test set.
-    Logs the model, metrics, and metadata to MLflow, including version descriptions and signatures.
-    """
+    # Trains and evaluates a Seasonal Naive model.
     if not isinstance(train_df, pl.DataFrame):
         train_df = pl.from_pandas(train_df)
     if not isinstance(test_df, pl.DataFrame):
@@ -181,13 +168,13 @@ def train_evaluate_baseline_model(
 
     model = StatsForecast(
         models=[SeasonalNaive(season_length=daily_season)],
-        freq="15m",
+        freq="15min",
         n_jobs=-1,
     )
 
-    model.fit(train_sf)
+    model.fit(train_sf.to_pandas())
     h = test_sf.height
-    predictions = model.predict(h=h)
+    predictions = pl.from_pandas(model.predict(h=h))
 
     merged = predictions.join(test_sf, on=["unique_id", "ds"], how="inner")
     evaluation_df = evaluate(
@@ -198,13 +185,19 @@ def train_evaluate_baseline_model(
 
     metrics = {
         "mae": float(
-            evaluation_df.loc[evaluation_df["metric"] == "mae", "SeasonalNaive"].values[0]
+            evaluation_df.loc[evaluation_df["metric"] == "mae", "SeasonalNaive"].values[
+                0
+            ]
         ),
         "rmse": float(
-            evaluation_df.loc[evaluation_df["metric"] == "rmse", "SeasonalNaive"].values[0]
+            evaluation_df.loc[
+                evaluation_df["metric"] == "rmse", "SeasonalNaive"
+            ].values[0]
         ),
         "mape": float(
-            evaluation_df.loc[evaluation_df["metric"] == "mape", "SeasonalNaive"].values[0]
+            evaluation_df.loc[
+                evaluation_df["metric"] == "mape", "SeasonalNaive"
+            ].values[0]
         ),
     }
 

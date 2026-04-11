@@ -1,7 +1,4 @@
-"""
-Configuration classes for the Extract Load and Transform (ELT) pipeline.
-Defines data structures for S3 storage and scraping settings.
-"""
+# elt configuration for storage and scraping
 
 import marimo
 
@@ -16,9 +13,7 @@ with app.setup:
 @app.class_definition
 @dataclass
 class S3Config:
-    """
-    Data structure for S3 connection and storage parameters.
-    """
+    # s3 connection and storage parameters
     endpoint_url: str
     region_name: str
     bucket_name: str
@@ -29,9 +24,7 @@ class S3Config:
 @app.class_definition
 @dataclass
 class ScraperConfig:
-    """
-    Data structure for configuring the NRLDC data scraper.
-    """
+    # scraper configuration
     live_extraction: bool
     start_year: int
     s3: S3Config

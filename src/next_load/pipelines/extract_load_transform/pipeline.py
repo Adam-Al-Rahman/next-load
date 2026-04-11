@@ -1,7 +1,4 @@
-"""
-Kedro pipeline for Extract Load and Transform (ELT) operations.
-Coordinates scraping, downloading, and initial transformation of NRLDC data.
-"""
+# Kedro pipeline for NRLDC data extraction and transformation
 
 from __future__ import annotations
 import asyncio
@@ -30,19 +27,15 @@ from .transform_nrldc_forecast import (
 logger = logging.getLogger(__name__)
 
 
+# SSL context for legacy government portals
 def create_unsafe_ssl_context():
-    """
-    Creates an SSL context that allows legacy server connections for older government portals.
-    """
     context = ssl.create_default_context()
     context.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0x4)
     return context
 
 
+# Asynchronous file downloader
 async def download_file(client: httpx.AsyncClient, url: str) -> bytes:
-    """
-    Downloads a file asynchronously using the provided HTTP client.
-    """
     try:
         response = await client.get(url, timeout=60.0)
         response.raise_for_status()
@@ -52,13 +45,10 @@ async def download_file(client: httpx.AsyncClient, url: str) -> bytes:
         return b""
 
 
+# Scrapes and partitions NRLDC data
 async def run_scraper_partitioned(
     scraper_config: ScraperConfig,
 ) -> tuple[dict[str, pl.DataFrame], dict[str, pl.DataFrame]]:
-    """
-    Runs the asynchronous scraper and partitions the results by year and month.
-    Downloads associated Excel files and stores them as Polars DataFrames in a dictionary.
-    """
     metadata_partitions = {}
     file_partitions = {}
     ssl_context = create_unsafe_ssl_context()
@@ -96,13 +86,10 @@ async def run_scraper_partitioned(
     return metadata_partitions, file_partitions
 
 
+# Kedro node for scraping
 def scrape_and_partition_nrldc_node(
     params: dict[str, Any],
 ) -> tuple[dict[str, pl.DataFrame], dict[str, pl.DataFrame]]:
-    """
-    Kedro node that triggers the asynchronous scraping and partitioning process.
-    Configures storage and scraper settings before execution.
-    """
     from next_load.core.nl_auth import get_infisical_secret
 
     s3_config = S3Config(
@@ -122,13 +109,10 @@ def scrape_and_partition_nrldc_node(
     return asyncio.run(run_scraper_partitioned(scraper_config))
 
 
+# Validates raw data partitions
 def validate_raw_partitions_node(
     partitioned_input: dict[str, Callable[[], pl.DataFrame]],
 ) -> dict[str, pl.DataFrame]:
-    """
-    Kedro node for validating raw Excel file partitions against expected schemas.
-    Logs validation metrics to MLflow.
-    """
     validated_partitions = {}
     success_count = 0
     fail_count = 0
@@ -152,13 +136,10 @@ def validate_raw_partitions_node(
     return validated_partitions
 
 
+# Transforms validated partitions
 def transform_forecast_partitions_node(
     validated_input: dict[str, pl.DataFrame],
 ) -> pl.DataFrame:
-    """
-    Kedro node that applies transformation logic to all validated raw partitions.
-    Concatenates individual partitions into a single sorted DataFrame.
-    """
     all_dfs = []
     for partition_key, df in validated_input.items():
         transformed_pl_df = transform_single_partition(df, partition_key)
@@ -171,10 +152,8 @@ def transform_forecast_partitions_node(
     return pl.concat(all_dfs).sort(["date", "period"])
 
 
+# ELT pipeline definition
 def create_pipeline(**kwargs) -> Pipeline:
-    """
-    Defines the complete ELT pipeline structure.
-    """
     return pipeline(
         [
             node(

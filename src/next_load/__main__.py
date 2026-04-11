@@ -1,5 +1,5 @@
-"""next_load file for ensuring the package is executable
-as `next-load` and `python -m next_load`
+"""
+This module serves as the entry point for executing the package.
 """
 
 import sys
@@ -11,6 +11,9 @@ from kedro.framework.project import configure_project
 
 
 def main(*args, **kwargs) -> Any:
+    """
+    Configures the kedro project and runs the command line interface.
+    """
     package_name = Path(__file__).parent.name
     configure_project(package_name)
 

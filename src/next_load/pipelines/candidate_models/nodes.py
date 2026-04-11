@@ -1,7 +1,4 @@
-"""
-Processing nodes for the candidate models pipeline.
-Implements advanced forecasting using LightGBM (MLForecast) and Deep Learning (NeuralForecast) with Optuna tuning and MLflow tracking.
-"""
+# Nodes for candidate models pipeline using LightGBM and NeuralForecast.
 
 import logging
 import shutil
@@ -15,7 +12,6 @@ import numpy as np
 import optuna
 import pandas as pd
 import polars as pl
-import torch
 from lightgbm import LGBMRegressor
 from mlflow.models import infer_signature
 from mlforecast import MLForecast
@@ -25,9 +21,6 @@ from mlforecast.lag_transforms import (
     RollingStd,
 )
 from mlforecast.target_transforms import Differences
-from neuralforecast import NeuralForecast
-from neuralforecast.losses.pytorch import MAE, HuberLoss
-from neuralforecast.models import NHITS, TiDE
 from utilsforecast.evaluation import evaluate
 from utilsforecast.losses import mae, mape, rmse
 
@@ -37,10 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class MLForecastWrapper(mlflow.pyfunc.PythonModel):
-    """
-    MLflow wrapper for MLForecast objects to enable model registry and standardized inference.
-    Handles ensemble logic for LightGBM variants.
-    """
+    # MLflow wrapper for MLForecast objects to enable model registry and standardized inference.
 
     def __init__(self, model, variant_name, is_ensemble=False):
         self.model = model
@@ -48,10 +38,7 @@ class MLForecastWrapper(mlflow.pyfunc.PythonModel):
         self.is_ensemble = is_ensemble
 
     def predict(self, context, model_input, params=None):
-        """
-        Generates predictions for a given horizon or input DataFrame.
-        Automatically handles Polars to Pandas conversion and ensemble averaging.
-        """
+        # Generates predictions for a given horizon or input DataFrame.
         if isinstance(model_input, (int, np.integer)):
             h = int(model_input)
             preds = self.model.predict(h=h)
@@ -79,23 +66,16 @@ class MLForecastWrapper(mlflow.pyfunc.PythonModel):
 
 
 class NeuralForecastWrapper(mlflow.pyfunc.PythonModel):
-    """
-    MLflow wrapper for NeuralForecast objects.
-    Manages loading the saved model artifacts and generating ensemble predictions from NHITS and TiDE.
-    """
+    # MLflow wrapper for NeuralForecast objects.
 
     def load_context(self, context):
-        """
-        Loads the NeuralForecast model from artifacts upon initialization.
-        """
+        # Loads the NeuralForecast model from artifacts upon initialization.
         from neuralforecast import NeuralForecast
 
         self.model = NeuralForecast.load(path=context.artifacts["nf_model"])
 
     def predict(self, context, model_input, params=None):
-        """
-        Generates predictions for deep learning models.
-        """
+        # Generates predictions for deep learning models.
         if isinstance(model_input, pl.DataFrame):
             model_input = model_input.to_pandas()
 
@@ -114,27 +94,29 @@ class NeuralForecastWrapper(mlflow.pyfunc.PythonModel):
 
 
 class SafeLGBMRegressor(LGBMRegressor):
-    """
-    Enhanced LGBMRegressor that ensures Polars compatibility and bypasses broken sklearn wrapper fits.
-    Converts inputs to Numpy arrays and handles native booster training if the standard fit fails.
-    """
+    # Enhanced LGBMRegressor for Polars compatibility and fallback fitting.
 
     def fit(self, X, y, **kwargs):
-        """
-        Fits the LightGBM model with type safety and error handling for specific scikit-learn versions.
-        """
-        if isinstance(X, pl.DataFrame):
-            X = X.to_numpy()
+        # Fits the LightGBM model with type safety and error handling.
+        if isinstance(X, (pl.DataFrame, pd.DataFrame)):
+            X_numeric = (
+                X.to_numpy()
+                if isinstance(X, pl.DataFrame)
+                else X.select_dtypes(include=[np.number]).to_numpy()
+            )
+            if np.isnan(X_numeric).any():
+                X = np.nan_to_num(X_numeric)
+            else:
+                X = X.to_numpy()
         elif hasattr(X, "to_numpy"):
             X = X.to_numpy()
+            if np.issubdtype(X.dtype, np.number) and np.isnan(X).any():
+                X = np.nan_to_num(X)
 
-        if isinstance(y, pl.Series):
+        if isinstance(y, (pl.Series, pd.Series)):
             y = y.to_numpy()
         elif hasattr(y, "to_numpy"):
             y = y.to_numpy()
-
-        if np.isnan(X).any():
-            X = np.nan_to_num(X)
 
         try:
             return super().fit(X, y, **kwargs)
@@ -156,16 +138,21 @@ class SafeLGBMRegressor(LGBMRegressor):
             raise e
 
     def predict(self, X, **kwargs):
-        """
-        Predicts using the fitted model or the native booster if fallback was used.
-        """
-        if isinstance(X, pl.DataFrame):
-            X = X.to_numpy()
+        # Predicts using the fitted model or native booster.
+        if isinstance(X, (pl.DataFrame, pd.DataFrame)):
+            X_numeric = (
+                X.to_numpy()
+                if isinstance(X, pl.DataFrame)
+                else X.select_dtypes(include=[np.number]).to_numpy()
+            )
+            if np.isnan(X_numeric).any():
+                X = np.nan_to_num(X_numeric)
+            else:
+                X = X.to_numpy()
         elif hasattr(X, "to_numpy"):
             X = X.to_numpy()
-
-        if np.isnan(X).any():
-            X = np.nan_to_num(X)
+            if np.issubdtype(X.dtype, np.number) and np.isnan(X).any():
+                X = np.nan_to_num(X)
 
         if hasattr(self, "_Booster") and self._Booster is not None:
             return self._Booster.predict(X, **kwargs)
@@ -173,9 +160,7 @@ class SafeLGBMRegressor(LGBMRegressor):
 
 
 def _build_fourier_features(df: pl.DataFrame) -> pl.DataFrame:
-    """
-    Vectorizes Fourier Harmonics for daily and yearly cycles to capture complex seasonality.
-    """
+    # Vectorizes Fourier Harmonics for daily and yearly cycles.
     exprs = []
     for k in range(1, 6):
         phase = (2 * np.pi * k * pl.col("decimal_hour")) / 24.0
@@ -195,10 +180,7 @@ def _build_fourier_features(df: pl.DataFrame) -> pl.DataFrame:
 def create_candidate_features(
     train: Any, test: Any, parameters: Dict[str, Any]
 ) -> Tuple[pl.DataFrame, pl.DataFrame]:
-    """
-    Generates advanced features for candidate models including Fourier harmonics and seasonality flags.
-    Handles input type conversion and outlier detection for training data.
-    """
+    # Generates advanced features including Fourier harmonics and seasonality flags.
     if not isinstance(train, pl.DataFrame):
         if isinstance(train, pd.DataFrame):
             train = pl.from_pandas(train)
@@ -267,10 +249,7 @@ def create_candidate_features(
 def impute_candidate_train_data(
     train: pl.DataFrame, parameters: Dict[str, Any]
 ) -> pl.DataFrame:
-    """
-    Imputes missing demand data using LightGBM and historical anchors.
-    Identifies outliers via IQR and performs predictive filling for better model training.
-    """
+    # Imputes missing demand data using LightGBM and historical anchors.
     target_col = parameters["target_column"]
     date_col = parameters["date_column"]
     prep_params = parameters["preprocessing"]
@@ -324,10 +303,7 @@ def impute_candidate_train_data(
 def train_lgbm_candidate_models(
     train_df: pl.DataFrame, parameters: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """
-    Trains multiple LightGBM variants (Stable, Anchored, Ensemble) using MLForecast and Optuna.
-    Tracks each variant's performance and registers best models in MLflow.
-    """
+    # Trains LightGBM variants using MLForecast and Optuna.
     mlflow.set_tracking_uri(get_mlflow_tracking_uri())
     target_col = parameters["target_column"]
     date_col = parameters["date_column"]
@@ -340,6 +316,7 @@ def train_lgbm_candidate_models(
     df_prepared = (
         train_df.rename({date_col: "ds", target_col: "y"})
         .with_columns([pl.col("ds").cast(pl.Datetime), pl.lit("grid_1").alias(id_col)])
+        .unique(subset=["ds"], keep="last")
         .sort("ds")
     )
 
@@ -364,8 +341,15 @@ def train_lgbm_candidate_models(
     ]
     exog_cols = feature_cols + fourier_cols
 
-    df_prepared = df_prepared.drop_nulls(subset=exog_cols + ["y"])
-    df_prepared = df_prepared.select([id_col, "ds", "y"] + exog_cols)
+    df_prepared = (
+        df_prepared.drop_nulls(subset=exog_cols + ["y"])
+        .upsample(time_column="ds", every=freq)
+        .fill_null(strategy="forward")
+        .fill_null(strategy="backward")
+        .select([id_col, "ds", "y"] + exog_cols)
+    )
+
+    lgbm_freq = freq.replace("m", "min") if freq.endswith("m") else freq
 
     best_models = {}
 
@@ -414,7 +398,7 @@ def train_lgbm_candidate_models(
 
             fcst = MLForecast(
                 models={"LGBM": model},
-                freq=freq,
+                freq=lgbm_freq,
                 lags=lags,
                 lag_transforms=lag_transforms,
                 target_transforms=target_transforms,
@@ -427,17 +411,17 @@ def train_lgbm_candidate_models(
             val_opt = df_prepared.tail(val_size).select([id_col, "ds", "y"] + exog_cols)
 
             fcst.fit(
-                train_opt,
+                train_opt.to_pandas(),
                 id_col=id_col,
                 time_col="ds",
                 target_col="y",
                 static_features=[],
             )
             future_exog = val_opt.select([id_col, "ds"] + exog_cols)
-            preds = fcst.predict(h=val_size, X_df=future_exog)
+            preds = fcst.predict(h=val_size, X_df=future_exog.to_pandas())
 
             eval_df = val_opt.select([id_col, "ds", "y"]).join(
-                preds, on=[id_col, "ds"], how="inner"
+                pl.from_pandas(preds), on=[id_col, "ds"], how="inner"
             )
             score = evaluate(
                 eval_df, metrics=[mape], models=["LGBM"], id_col=id_col, target_col="y"
@@ -484,14 +468,14 @@ def train_lgbm_candidate_models(
 
             final_fcst = MLForecast(
                 models=models,
-                freq=freq,
+                freq=lgbm_freq,
                 lags=lags,
                 lag_transforms=lag_transforms,
                 target_transforms=target_transforms,
             )
 
             final_fcst.fit(
-                df_prepared,
+                df_prepared.to_pandas(),
                 id_col=id_col,
                 time_col="ds",
                 target_col="y",
@@ -525,10 +509,12 @@ def train_lgbm_candidate_models(
 def train_neural_candidate_models(
     train_df: pl.DataFrame, parameters: Dict[str, Any]
 ) -> Any:
-    """
-    Trains deep learning models (TiDE + NHITS) using NeuralForecast.
-    Registers the neural ensemble in MLflow with appropriate artifacts and metadata.
-    """
+    # Trains deep learning models using NeuralForecast.
+    import torch
+    from neuralforecast import NeuralForecast
+    from neuralforecast.losses.pytorch import MAE, HuberLoss
+    from neuralforecast.models import NHITS, TiDE
+
     mlflow.set_tracking_uri(get_mlflow_tracking_uri())
     target_col = parameters["target_column"]
     date_col = parameters["date_column"]
@@ -544,6 +530,7 @@ def train_neural_candidate_models(
         .with_columns(
             [pl.col("ds").cast(pl.Datetime("us")), pl.lit("grid_1").alias(id_col)]
         )
+        .unique(subset=["ds"], keep="last")
         .sort("ds")
     )
 
@@ -568,8 +555,15 @@ def train_neural_candidate_models(
     ]
     exog_cols = feature_cols + fourier_cols
 
-    df_prepared = df_prepared.drop_nulls(subset=exog_cols + ["y"]).select(
-        [id_col, "ds", "y"] + exog_cols
+    freq = parameters.get("freq", "15m")
+    nf_freq = freq.replace("m", "min") if freq.endswith("m") else freq
+
+    df_prepared = (
+        df_prepared.drop_nulls(subset=exog_cols + ["y"])
+        .upsample(time_column="ds", every=freq)
+        .fill_null(strategy="forward")
+        .fill_null(strategy="backward")
+        .select([id_col, "ds", "y"] + exog_cols)
     )
 
     lookback = nf_params["lookback"]
@@ -600,7 +594,7 @@ def train_neural_candidate_models(
         random_seed=nf_params["random_seed"],
     )
 
-    nf = NeuralForecast(models=[nhits_model, tide_model], freq="15min")
+    nf = NeuralForecast(models=[nhits_model, tide_model], freq=nf_freq)
 
     with mlflow.start_run(run_name="neural_ensemble", nested=True):
         mlflow.log_params(nf_params)
@@ -633,10 +627,7 @@ def evaluate_candidate_models(
     test_df: pl.DataFrame,
     parameters: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """
-    Evaluates all candidate LightGBM and Neural models on the testing dataset.
-    Calculates RMSE, MAE, and MAPE metrics and logs them to MLflow for final comparison.
-    """
+    # Evaluates candidate models on the testing dataset.
     mlflow.set_tracking_uri(get_mlflow_tracking_uri())
     target_col = parameters["target_column"]
     date_col = parameters["date_column"]
@@ -644,10 +635,24 @@ def evaluate_candidate_models(
 
     df_test = (
         test_df.rename({date_col: "ds", target_col: "y"})
-        .with_columns([pl.col("ds").cast(pl.Datetime), pl.lit("grid_1").alias(id_col)])
+        .with_columns(
+            [
+                pl.col("ds").cast(pl.Datetime("us")),
+                pl.lit("grid_1").alias(id_col),
+            ]
+        )
+        .unique(subset=["ds"], keep="last")
         .sort("ds")
     )
-    df_test_nf = df_test.with_columns(pl.col("ds").cast(pl.Datetime("us")))
+
+    freq = parameters.get("freq", "15m")
+    df_test = (
+        df_test.upsample(time_column="ds", every=freq)
+        .fill_null(strategy="forward")
+        .fill_null(strategy="backward")
+    )
+
+    df_test_nf = df_test.clone()
 
     all_results = {}
     feature_cols = [
@@ -672,16 +677,20 @@ def evaluate_candidate_models(
     with mlflow.start_run(run_name="candidate_evaluation", nested=True):
         for name, fcst in lgbm_models.items():
             future_exog = df_test.select([id_col, "ds"] + exog_cols)
-            preds = fcst.predict(h=len(df_test), X_df=future_exog)
+            preds = fcst.predict(h=len(df_test), X_df=future_exog.to_pandas())
+            preds_pl = pl.from_pandas(preds)
 
-            if "LGBM_Huber" in preds.columns and "LGBM_MAE" in preds.columns:
-                preds = preds.with_columns(
+            if "LGBM_Huber" in preds_pl.columns and "LGBM_MAE" in preds_pl.columns:
+                preds_pl = preds_pl.with_columns(
                     ((pl.col("LGBM_Huber") + pl.col("LGBM_MAE")) / 2).alias(name)
                 )
 
             eval_df = df_test.select([id_col, "ds", "y"]).join(
-                preds, on=[id_col, "ds"], how="inner"
+                preds_pl, on=[id_col, "ds"], how="inner"
             )
+
+            logger.info(f"Evaluation rows for {name}: {eval_df.height}")
+
             metrics = evaluate(
                 eval_df,
                 metrics=[rmse, mae, mape],
@@ -694,37 +703,63 @@ def evaluate_candidate_models(
                 mlflow.log_metric(f"{name}_{row['metric']}", row[name])
                 all_results[f"{name}_{row['metric']}"] = {"value": row[name], "step": 0}
 
-        exog_cols_nf = [
-            c for c in df_test_nf.columns if c not in [id_col, "ds", "y", "is_imputed"]
-        ]
-        future_exog_nf = df_test_nf.select([id_col, "ds"] + exog_cols_nf).to_pandas()
+        future_exog_nf_pl = df_test_nf.select([id_col, "ds"] + exog_cols).to_pandas()
+
+        future_df = neural_model.make_future_dataframe()
+
+        future_exog_nf_pl["ds"] = pd.to_datetime(future_exog_nf_pl["ds"])
+        future_df["ds"] = pd.to_datetime(future_df["ds"])
+        future_exog_nf_pl[id_col] = future_exog_nf_pl[id_col].astype(str)
+        future_df[id_col] = future_df[id_col].astype(str)
+
+        future_exog_nf = future_df.merge(
+            future_exog_nf_pl, on=[id_col, "ds"], how="left"
+        )
+        future_exog_nf = future_exog_nf.ffill().bfill().fillna(0)
 
         preds_nf = neural_model.predict(futr_df=future_exog_nf)
         preds_nf_pl = pl.from_pandas(preds_nf.reset_index()).with_columns(
-            pl.col("ds").cast(pl.Datetime)
+            pl.col("ds").cast(pl.Datetime("us"))
         )
-        preds_nf_pl = preds_nf_pl.with_columns(
-            ((pl.col("NHITS") + pl.col("TiDE")) / 2).alias("Neural_Ensemble")
-        )
+
+        if "NHITS" in preds_nf_pl.columns and "TiDE" in preds_nf_pl.columns:
+            preds_nf_pl = preds_nf_pl.with_columns(
+                ((pl.col("NHITS") + pl.col("TiDE")) / 2).alias("Neural_Ensemble")
+            )
+        else:
+            available_model = [
+                c for c in preds_nf_pl.columns if c not in [id_col, "ds"]
+            ][0]
+            preds_nf_pl = preds_nf_pl.with_columns(
+                pl.col(available_model).alias("Neural_Ensemble")
+            )
 
         eval_df_nf = df_test.select([id_col, "ds", "y"]).join(
             preds_nf_pl, on=[id_col, "ds"], how="inner"
         )
-        metrics_nf = evaluate(
-            eval_df_nf,
-            metrics=[rmse, mae, mape],
-            models=["Neural_Ensemble"],
-            id_col=id_col,
-            target_col="y",
-        )
 
-        for _, row in metrics_nf.to_pandas().iterrows():
-            mlflow.log_metric(
-                f"Neural_Ensemble_{row['metric']}", row["Neural_Ensemble"]
+        logger.info(f"Evaluation rows for Neural_Ensemble: {eval_df_nf.height}")
+
+        if eval_df_nf.height > 0:
+            metrics_nf = evaluate(
+                eval_df_nf,
+                metrics=[rmse, mae, mape],
+                models=["Neural_Ensemble"],
+                id_col=id_col,
+                target_col="y",
             )
-            all_results[f"Neural_Ensemble_{row['metric']}"] = {
-                "value": row["Neural_Ensemble"],
-                "step": 0,
-            }
+
+            for _, row in metrics_nf.to_pandas().iterrows():
+                mlflow.log_metric(
+                    f"Neural_Ensemble_{row['metric']}", row["Neural_Ensemble"]
+                )
+                all_results[f"Neural_Ensemble_{row['metric']}"] = {
+                    "value": row["Neural_Ensemble"],
+                    "step": 0,
+                }
+        else:
+            logger.warning(
+                "Neural_Ensemble evaluation resulting in 0 rows! Check timestamp alignment."
+            )
 
     return all_results

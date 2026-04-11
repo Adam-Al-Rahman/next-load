@@ -1,14 +1,13 @@
 """
-Processing nodes for the data processing pipeline.
-Provides functions for data cleaning, interval alignment, and dataset splitting.
+Processing nodes for data cleaning and splitting.
 """
+
 import polars as pl
 
 
 def preprocess_nrldc_data(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Cleans and transforms raw primary data into a structured time-series format.
-    Extracts timestamps from period strings and ensures unique, sorted data.
+    Transforms raw data into structured time series by extracting timestamps and sorting.
     """
     processed_df = (
         df.with_columns(start_time=pl.col("period").str.split(" - ").list.first())
@@ -34,8 +33,7 @@ def preprocess_nrldc_data(df: pl.DataFrame) -> pl.DataFrame:
 
 def insert_missing_intervals(df: pl.DataFrame, interval: str = "15m") -> pl.DataFrame:
     """
-    Ensures the time series contains all expected intervals within its range.
-    Joins the input data with a generated full range of timestamps.
+    Fills missing timestamps in the series to ensure a continuous range.
     """
     if df.is_empty():
         return df
@@ -60,8 +58,7 @@ def split_train_test_by_horizon(
     df: pl.DataFrame, test_days: int = 14, horizon: int = 96
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """
-    Splits the dataset into training and testing sets based on the specified forecast horizon.
-    Calculates the test size by multiplying the horizon by the number of test days.
+    Splits data into training and testing sets based on the forecast horizon.
     """
     test_size = horizon * test_days
 

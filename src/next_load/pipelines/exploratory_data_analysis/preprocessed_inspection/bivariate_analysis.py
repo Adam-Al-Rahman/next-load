@@ -84,9 +84,10 @@ def _(get_infisical_secret, pl, pq, s3fs):
     S3_FS = s3fs.S3FileSystem(
         key=get_infisical_secret("AWS_ACCESS_KEY_ID"),
         secret=get_infisical_secret("AWS_SECRET_ACCESS_KEY"),
-        endpoint_url=get_infisical_secret("AWS_ENDPOINT_URL") or "http://localhost:3900",
+        endpoint_url=get_infisical_secret("AWS_ENDPOINT_URL")
+        or "http://localhost:3900",
         client_kwargs={"region_name": get_infisical_secret("AWS_DEFAULT_REGION")},
-        config_kwargs={"s3": {"addressing_style": "path"}}
+        config_kwargs={"s3": {"addressing_style": "path"}},
     )
     train_dataset = pl.from_arrow(
         pq.ParquetDataset(
@@ -187,9 +188,7 @@ def _(pl, train_dataset):
     )
 
     train_detrended = train_trend.with_columns(
-        (pl.col("actual_demand_mw") - pl.col("macro_trend")).alias(
-            "detrended_signal"
-        ),
+        (pl.col("actual_demand_mw") - pl.col("macro_trend")).alias("detrended_signal"),
         pl.col("timestamp").dt.weekday().alias("weekday"),
         pl.col("timestamp").dt.time().alias("time_of_day"),
     )
@@ -262,9 +261,7 @@ def _(datetime, pl, train_uf):
         .interpolate(),
         is_imputed=pl.when(pl.col("ds").is_in(target_series))
         .then(True)
-        .otherwise(
-            pl.col("is_imputed") if "is_imputed" in train_uf.columns else False
-        ),
+        .otherwise(pl.col("is_imputed") if "is_imputed" in train_uf.columns else False),
     )
     return (train_uf_ol,)
 

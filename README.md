@@ -2,6 +2,11 @@
 
 Next Load is an automated, end-to-end data engineering and machine learning pipeline for forecasting energy load using data from the National Regional Load Dispatch Centre (NRLDC). The project emphasizes a robust, scalable, and observable "no local data" architecture.
 
+## Pipelines Architecture
+![Next-Load](./assets/nl-kviz.png)
+
+![Next-Load Pipeline](./assets/nl-pipelines.png)
+
 ## How It Works
 
 The system operates as a series of modular pipelines managed by **Kedro**, orchestrated for production via **Prefect 3**. 

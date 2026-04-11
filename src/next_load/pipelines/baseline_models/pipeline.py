@@ -1,6 +1,5 @@
 """
-Kedro pipeline for baseline model training and evaluation.
-Coordinates feature engineering, data imputation, and Seasonal Naive model execution.
+Baseline models pipeline definition.
 """
 
 from __future__ import annotations
@@ -14,26 +13,14 @@ from .nodes import (
 
 def create_pipeline(**kwargs) -> Pipeline:
     """
-    Defines the baseline models pipeline structure.
+    Creates the baseline models pipeline.
     """
     return pipeline(
         [
             node(
-                func=build_baseline_features,
-                inputs=["train_dataset", "params:baseline_models"],
-                outputs="train_dataset_with_features",
-                name="build_baseline_features_node",
-            ),
-            node(
-                func=impute_baseline_data,
-                inputs=["train_dataset_with_features", "params:baseline_models"],
-                outputs="train_dataset_imputed",
-                name="impute_baseline_data_node",
-            ),
-            node(
                 func=train_evaluate_baseline_model,
                 inputs=[
-                    "train_dataset_imputed",
+                    "train_dataset",
                     "test_dataset",
                     "params:baseline_models",
                 ],

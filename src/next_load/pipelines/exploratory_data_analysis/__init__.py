@@ -1,6 +1,5 @@
 """
-This is a boilerplate pipeline 'exploratory_data_analysis'
-generated using Kedro 1.2.0
+Exploratory data analysis pipeline initialization.
 """
 
 from .pipeline import create_pipeline

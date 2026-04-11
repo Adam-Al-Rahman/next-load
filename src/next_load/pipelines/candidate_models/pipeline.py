@@ -1,6 +1,5 @@
 """
-Kedro pipeline for advanced candidate model training and evaluation.
-Coordinates feature generation, imputation, and training of LightGBM and Neural ensemble models.
+Pipeline for candidate model training and evaluation
 """
 
 from kedro.pipeline import Pipeline, node, pipeline
@@ -16,7 +15,7 @@ from .nodes import (
 
 def create_pipeline(**kwargs) -> Pipeline:
     """
-    Defines the candidate models pipeline structure.
+    Create candidate model training and evaluation pipeline
     """
     return pipeline(
         [
@@ -27,20 +26,14 @@ def create_pipeline(**kwargs) -> Pipeline:
                 name="create_candidate_features_node",
             ),
             node(
-                func=impute_candidate_train_data,
-                inputs=["train_with_exog", "params:candidate_models"],
-                outputs="train_imputed",
-                name="impute_candidate_train_data_node",
-            ),
-            node(
                 func=train_lgbm_candidate_models,
-                inputs=["train_imputed", "params:candidate_models"],
+                inputs=["train_with_exog", "params:candidate_models"],
                 outputs="lgbm_candidate_models",
                 name="train_lgbm_candidate_models_node",
             ),
             node(
                 func=train_neural_candidate_models,
-                inputs=["train_imputed", "params:candidate_models"],
+                inputs=["train_with_exog", "params:candidate_models"],
                 outputs="neural_candidate_model",
                 name="train_neural_candidate_models_node",
             ),

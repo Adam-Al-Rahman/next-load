@@ -1,4 +1,4 @@
-"""next_load"""
+# Next Load energy forecasting package.
 
 from next_load import pipelines
 

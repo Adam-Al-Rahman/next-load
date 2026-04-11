@@ -1,11 +1,8 @@
-"""
-Marimo notebook for data preprocessing operations.
-Handles data loading from S3, cleaning, interval alignment, and dataset splitting for model training.
-"""
+# Marimo notebook for data preprocessing operations including data loading cleaning interval alignment and dataset splitting
 
 import marimo
 
-__generated_with = "0.21.1"
+__generated_with = "0.23.0"
 app = marimo.App(width="full", auto_download=["ipynb"])
 
 with app.setup:
@@ -20,9 +17,7 @@ with app.setup:
 
 @app.cell
 def _():
-    """
-    Import and display data integrity insights from the exploratory analysis phase.
-    """
+    # Import and display data integrity insights from the exploratory analysis phase
     from next_load.pipelines.exploratory_data_analysis.raw_inspection.data_integrity import (
         DATA_INTEGRITY_INSIGHTS,
     )
@@ -41,9 +36,7 @@ def _():
 
 @app.function
 def DATA_PREPROCESSING_INSIGHTS():
-    """
-    Returns a list of best practices and insights for time-series data preprocessing.
-    """
+    # Returns a list of best practices and insights for time-series data preprocessing
     INSIGHTS = [
         {
             "Category": "Data Preprocess",
@@ -64,9 +57,7 @@ def DATA_PREPROCESSING_INSIGHTS():
 
 @app.cell
 def _():
-    """
-    Configure S3 filesystem using Infisical secrets and load the primary dataset.
-    """
+    # Configure S3 filesystem and load the primary dataset
     s3_fs = s3fs.S3FileSystem(
         key=get_infisical_secret("AWS_ACCESS_KEY_ID"),
         secret=get_infisical_secret("AWS_SECRET_ACCESS_KEY"),
@@ -85,6 +76,19 @@ def _():
 
 
 @app.cell
+def _(s3_fs):
+    preprox = pl.from_arrow(
+        pq.ParquetDataset(
+            "next-load-data/processed/01_primary/preprocessed_dataset.parquet",
+            filesystem=s3_fs,
+        ).read_pandas()
+    )
+
+    preprox.tail(25)
+    return
+
+
+@app.cell
 def _(primary_dataset):
     primary_dataset.head()
     return
@@ -92,10 +96,7 @@ def _(primary_dataset):
 
 @app.cell
 def _(primary_dataset):
-    """
-    Perform core data cleaning: derive timestamps from date and period strings.
-    Ensures unique timestamps and sorted data.
-    """
+    # Perform core data cleaning derive timestamps and ensure unique sorted data
     processed_dataset = (
         primary_dataset.with_columns(
             start_time=pl.col("period").str.split(" - ").list.first()
@@ -144,16 +145,16 @@ def _(processed_dataset):
     START_TIMESTAMP = processed_dataset["timestamp"][0]
     END_TIMESTAMP = processed_dataset["timestamp"][-1]
 
+    START_TIMESTAMP = processed_dataset["timestamp"][0]
+    END_TIMESTAMP = processed_dataset["timestamp"][-1]
+
     START_TIMESTAMP, END_TIMESTAMP
     return END_TIMESTAMP, START_TIMESTAMP
 
 
 @app.cell
 def _(END_TIMESTAMP, START_TIMESTAMP, processed_dataset):
-    """
-    Align the dataset to a continuous 15-minute interval range.
-    Fills gaps with null values (or zeros as a placeholder).
-    """
+    # Align dataset to continuous fifteen minute interval range and fill gaps
     expected_range = pl.DataFrame(
         {
             "timestamp": pl.datetime_range(
@@ -176,9 +177,7 @@ def _(inserted_ts):
 
 @app.cell
 def _(expected_range, inserted_ts):
-    """
-    Verify that every 15-minute interval is present in the final dataset.
-    """
+    # Verify every fifteen minute interval is present in the final dataset
     missing_timestamps = expected_range.join(
         inserted_ts,
         left_on="timestamp",
@@ -214,9 +213,7 @@ def _(preprocessed_dataset):
 
 @app.cell
 def _(preprocessed_dataset, s3_fs):
-    """
-    Persist the preprocessed dataset back to S3 in Parquet format.
-    """
+    # Persist the preprocessed dataset back to S3 in Parquet format
     s3_preprocessed_path = (
         "next-load-data/processed/01-primary/preprocessed_dataset.parquet"
     )
@@ -243,10 +240,7 @@ def _():
 
 @app.cell
 def _(preprocessed_dataset):
-    """
-    Splits the preprocessed data into train and test sets.
-    Uses a 14-day forecast horizon (96 intervals per day).
-    """
+    # Split the preprocessed data into train and test sets using a fourteen day forecast horizon
     H = 96
     test_days = 14
     test_size = H * test_days
@@ -270,9 +264,7 @@ def _(test):
 
 @app.cell
 def _(s3_fs, train):
-    """
-    Persist the training dataset to S3.
-    """
+    # Persist the training dataset to S3
     s3_train_path = "next-load-data/processed/01-primary/train_dataset.parquet"
 
     print(f"Writing DataFrame to {s3_train_path}...")
@@ -283,9 +275,7 @@ def _(s3_fs, train):
 
 @app.cell
 def _(s3_fs, test):
-    """
-    Persist the testing dataset to S3.
-    """
+    # Persist the testing dataset to S3
     s3_test_path = "next-load-data/processed/01-primary/test_dataset.parquet"
 
     print(f"Writing DataFrame to {s3_test_path}...")

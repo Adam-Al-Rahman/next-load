@@ -1,3 +1,7 @@
+"""
+Extracts power grid data from the KPTCL dashboard and saves it to a local file.
+"""
+
 import asyncio
 import csv
 import json
@@ -12,17 +16,14 @@ from crawl4ai import (
     JsonCssExtractionStrategy,
 )
 
-# Configure standard Python logging for the local daemon
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
-# The local file where telemetry will be accumulated
 LOCAL_FILE_PATH = "kptcl_grid_data.csv"
 
-# Define the exact ordering of columns for the CSV
 CSV_HEADERS = [
     "ingestion_timestamp",
     "dashboard_timestamp",
@@ -47,8 +48,7 @@ CSV_HEADERS = [
 
 async def fetch_complete_table_kptcl():
     """
-    Extracts telemetry points from the KPTCL table and appends them
-    to a local CSV file using pure Python file I/O.
+    Scrapes data from the specified URL and appends it to a CSV file.
     """
     url = "https://kptclsldc.in/Default.aspx"
 
@@ -95,7 +95,6 @@ async def fetch_complete_table_kptcl():
                     metrics = data[0]
                     current_time = datetime.now()
 
-                    # Clean and type-cast the complete table safely
                     def safe_int(val):
                         try:
                             return int(str(val).replace(",", "").strip()) if val else 0
@@ -110,7 +109,6 @@ async def fetch_complete_table_kptcl():
                         except ValueError:
                             return 0.0
 
-                    # Construct a flat dictionary matching the CSV schema
                     row_data = {
                         "ingestion_timestamp": current_time.strftime(
                             "%Y-%m-%d %H:%M:%S"
@@ -136,10 +134,8 @@ async def fetch_complete_table_kptcl():
                         "mescom": safe_int(metrics.get("mescom")),
                     }
 
-                    # Determine if we need to write the CSV headers
                     file_exists = os.path.isfile(LOCAL_FILE_PATH)
 
-                    # Local File Sink (Append Mode)
                     with open(
                         LOCAL_FILE_PATH, mode="a", newline="", encoding="utf-8"
                     ) as f:
@@ -166,14 +162,16 @@ async def fetch_complete_table_kptcl():
 
 
 async def local_daemon_loop():
+    """
+    Periodically triggers the data extraction process.
+    """
     logging.info(
         "[@] Daemon Active: Orchestrating local state capture every 10 minutes..."
     )
     while True:
         await fetch_complete_table_kptcl()
-        await asyncio.sleep(600)  # 15 minutes
+        await asyncio.sleep(600)
 
 
 if __name__ == "__main__":
-    # Execute the daemon loop
     asyncio.run(local_daemon_loop())

@@ -1,7 +1,4 @@
-"""
-Marimo notebook for evaluating data integrity of raw primary datasets.
-Performs checks for missing values, time gaps, duplicates, and schema consistency.
-"""
+"""Evaluate raw dataset integrity by checking for missing values time gaps duplicates and schema consistency"""
 
 import marimo
 
@@ -29,9 +26,7 @@ def _():
 
 @app.function
 def DATA_INTEGRITY_INSIGHTS():
-    """
-    Returns high-level findings regarding dataset health, including identified time gaps and data consistency.
-    """
+    """High level findings about dataset health and identified time gaps"""
     INSIGHTS = [
         {
             "Category": "Data Integrity",
@@ -76,15 +71,14 @@ def DATA_INTEGRITY_INSIGHTS():
 
 @app.cell
 def _(get_infisical_secret, s3fs):
-    """
-    Load the primary dataset from S3 using cloud credentials.
-    """
+    """Load primary dataset from S3 using cloud credentials"""
     s3_fs = s3fs.S3FileSystem(
         key=get_infisical_secret("AWS_ACCESS_KEY_ID"),
         secret=get_infisical_secret("AWS_SECRET_ACCESS_KEY"),
-        endpoint_url=get_infisical_secret("AWS_ENDPOINT_URL") or "http://localhost:3900",
+        endpoint_url=get_infisical_secret("AWS_ENDPOINT_URL")
+        or "http://localhost:3900",
         client_kwargs={"region_name": get_infisical_secret("AWS_DEFAULT_REGION")},
-        config_kwargs={"s3": {"addressing_style": "path"}}
+        config_kwargs={"s3": {"addressing_style": "path"}},
     )
     primary_dataset = pl.from_arrow(
         pq.ParquetDataset(
@@ -136,9 +130,7 @@ def _():
 
 @app.cell
 def _(primary_dataset):
-    """
-    Transform raw primary data into a unified time-series for gap analysis.
-    """
+    """Transform data into unified time series for gap analysis"""
     processed_dataset = (
         primary_dataset.with_columns(
             start_time=pl.col("period").str.split(" - ").list.first()
@@ -178,9 +170,7 @@ def _(processed_dataset):
 
 @app.cell
 def _(processed_dataset):
-    """
-    Identify missing 15-minute intervals by comparing dataset against a full range.
-    """
+    """Identify missing intervals by comparing dataset against full range"""
     start_timestamp = processed_dataset["timestamp"][0]
     end_timestamp = processed_dataset["timestamp"][-1]
 
@@ -214,9 +204,7 @@ def _(missing_timestamps):
 
 @app.cell
 def _(missing_timestamps):
-    """
-    Group missing timestamps into contiguous blocks to visualize the duration of data loss.
-    """
+    """Group missing timestamps into contiguous blocks to visualize data loss duration"""
     missing_blocks = (
         missing_timestamps.sort("expected_timestamp")
         .with_columns(time_diff=pl.col("expected_timestamp").diff())

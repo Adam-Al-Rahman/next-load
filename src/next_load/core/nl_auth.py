@@ -1,6 +1,5 @@
 """
-Authentication and secret management for Next Load project.
-Integrates with Infisical for secure credential retrieval and provides S3 and MLflow configurations.
+Authentication and secret management module providing Infisical integration and configurations for S3 and MLflow
 """
 
 import os
@@ -17,8 +16,7 @@ def get_infisical_client(
     infisical_host="https://app.infisical.com",
 ) -> InfisicalSDKClient:
     """
-    Initializes and authenticates the Infisical SDK client.
-    Supports OIDC auth for GitHub Actions and Universal Auth for local development.
+    Initialize and authenticate the Infisical SDK client using OIDC for GitHub Actions or Universal Auth for local environments
     """
     load_dotenv(override=True)
 
@@ -53,14 +51,13 @@ def get_infisical_client(
 
 def get_infisical_secret(
     secret_name: str,
-    default: str = None,  # ty:ignore[invalid-parameter-default]
+    default: str = None,
     project_id: str = "7286983c-eb71-4a94-8ffb-724d15eb5a2b",
     env_slug: str = "prod",
     secret_path: str = "/extract_load_transform_pipeline/aws",
 ) -> str:
     """
-    Retrieves a secret from Infisical by name.
-    Falls back to a default value or environment variable if retrieval fails.
+    Retrieve a named secret from Infisical with optional fallback to defaults or environment variables
     """
     client = get_infisical_client()
     try:
@@ -79,7 +76,7 @@ def get_infisical_secret(
 @lru_cache(maxsize=1)
 def get_s3_client():
     """
-    Configures and returns a Boto3 S3 client using credentials from Infisical.
+    Configure and return a Boto3 S3 client using credentials retrieved from Infisical
     """
     aws_access_key = get_infisical_secret("AWS_ACCESS_KEY_ID")
     aws_secret_key = get_infisical_secret("AWS_SECRET_ACCESS_KEY")
@@ -99,14 +96,13 @@ def get_s3_client():
 
 def get_mlflow_tracking_uri() -> str:
     """
-    Constructs the MLflow tracking URI for Turso database integration.
-    Falls back to a local SQLite database if Turso credentials are not available.
+    Construct the MLflow tracking URI for Turso database integration or fallback to a local SQLite database
     """
     db_url = get_infisical_secret("TURSO_DATABASE_URL")
     auth_token = get_infisical_secret("TURSO_AUTH_TOKEN")
 
     if not db_url or not auth_token:
-        import logging  # noqa: PLC0415
+        import logging
 
         logging.getLogger(__name__).warning(
             "Turso secrets missing. Falling back to local MLflow SQLite."

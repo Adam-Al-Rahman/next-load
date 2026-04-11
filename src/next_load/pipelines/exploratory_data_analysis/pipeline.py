@@ -2,6 +2,7 @@
 Kedro pipeline for exploratory data analysis.
 Currently serves as a placeholder for EDA-related nodes and notebooks.
 """
+
 from kedro.pipeline import Node, Pipeline
 
 
